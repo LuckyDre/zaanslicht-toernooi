@@ -20,7 +20,7 @@ export default function LoginPage() {
     setError('')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) {
-      setError('Verkeerde e-mail of wachtwoord')
+      setError(error.message || 'Verkeerde e-mail of wachtwoord')
       setLoading(false)
     } else {
       router.push('/admin')
