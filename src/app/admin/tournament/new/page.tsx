@@ -86,19 +86,30 @@ export default function NewTournamentPage() {
     try {
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') + '-' + Date.now()
 
-      const { data: tournament, error: tErr } = await supabase
+      const tournamentBase = {
+        name: name.trim(), slug,
+        num_fields: numFields,
+        num_teams:  numTeams,
+        match_duration_minutes: matchMinutes * (numHalves === 2 ? 2 : 1),
+        num_halves: numHalves,
+        total_duration_minutes: totalMinutes ? parseInt(totalMinutes) : null,
+        finals_type: finalsType,
+        num_pools: numPools,
+        status: 'draft' as const,
+      }
+
+      // Try with pool_names; fall back gracefully if the column doesn't exist yet
+      let { data: tournament, error: tErr } = await supabase
         .from('tournaments').insert({
-          name: name.trim(), slug,
-          num_fields: numFields,
-          num_teams:  numTeams,
-          match_duration_minutes: matchMinutes * (numHalves === 2 ? 2 : 1),
-          num_halves: numHalves,
-          total_duration_minutes: totalMinutes ? parseInt(totalMinutes) : null,
-          finals_type: finalsType,
-          num_pools: numPools,
+          ...tournamentBase,
           pool_names: numPools > 1 ? poolNames.slice(0, numPools) : null,
-          status: 'draft',
         }).select().single()
+
+      // PostgreSQL error 42703 = undefined_column → migration not yet run → retry without it
+      if (tErr?.code === '42703') {
+        ;({ data: tournament, error: tErr } = await supabase
+          .from('tournaments').insert(tournamentBase).select().single())
+      }
 
       if (tErr || !tournament) throw tErr
 
