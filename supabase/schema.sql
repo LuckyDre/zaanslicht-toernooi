@@ -48,7 +48,7 @@ create table if not exists matches (
   scheduled_at timestamptz,
   started_at timestamptz,
   finished_at timestamptz,
-  status text not null default 'scheduled' check (status in ('scheduled','live','finished')),
+  status text not null default 'scheduled' check (status in ('scheduled','live','finished','cancelled')),
   created_at timestamptz default now()
 );
 
@@ -111,50 +111,56 @@ alter publication supabase_realtime add table standings;
 create or replace function update_standings()
 returns trigger as $$
 begin
-  -- Reset and recalculate for both teams
-  if NEW.status = 'finished' and NEW.home_score is not null and NEW.away_score is not null then
-    -- Upsert home team
-    insert into standings (tournament_id, team_id, played, won, drawn, lost, goals_for, goals_against, points)
-    values (NEW.tournament_id, NEW.home_team_id, 0, 0, 0, 0, 0, 0, 0)
-    on conflict (tournament_id, team_id) do nothing;
+  -- Fire when a match becomes finished OR was finished and is being changed/reset
+  if NEW.status = 'finished' or OLD.status = 'finished' then
 
-    insert into standings (tournament_id, team_id, played, won, drawn, lost, goals_for, goals_against, points)
-    values (NEW.tournament_id, NEW.away_team_id, 0, 0, 0, 0, 0, 0, 0)
-    on conflict (tournament_id, team_id) do nothing;
+    -- Step 1: reset all standings for this tournament to 0
+    update standings set
+      played = 0, won = 0, drawn = 0, lost = 0,
+      goals_for = 0, goals_against = 0, points = 0
+    where tournament_id = NEW.tournament_id;
 
-    -- Recalculate all standings from scratch
+    -- Step 2: recalculate from all finished group matches using UNION ALL
     update standings s set
-      played = sub.played,
-      won = sub.won,
-      drawn = sub.drawn,
-      lost = sub.lost,
-      goals_for = sub.goals_for,
+      played        = sub.played,
+      won           = sub.won,
+      drawn         = sub.drawn,
+      lost          = sub.lost,
+      goals_for     = sub.goals_for,
       goals_against = sub.goals_against,
-      points = sub.points
+      points        = sub.points
     from (
       select
         team_id,
-        count(*) as played,
-        sum(case when (team_id = home_team_id and home_score > away_score) or (team_id = away_team_id and away_score > home_score) then 1 else 0 end) as won,
-        sum(case when home_score = away_score then 1 else 0 end) as drawn,
-        sum(case when (team_id = home_team_id and home_score < away_score) or (team_id = away_team_id and away_score < home_score) then 1 else 0 end) as lost,
-        sum(case when team_id = home_team_id then home_score else away_score end) as goals_for,
-        sum(case when team_id = home_team_id then away_score else home_score end) as goals_against,
-        sum(case
-          when (team_id = home_team_id and home_score > away_score) or (team_id = away_team_id and away_score > home_score) then 3
-          when home_score = away_score then 1
-          else 0
-        end) as points
-      from matches m
-      cross join (values (m.home_team_id), (m.away_team_id)) t(team_id)
-      where m.tournament_id = NEW.tournament_id
-        and m.status = 'finished'
-        and m.phase = 'group'
-        and m.home_score is not null
+        count(*)::int                                                       as played,
+        sum(case when gf > ga then 1 else 0 end)::int                      as won,
+        sum(case when gf = ga then 1 else 0 end)::int                      as drawn,
+        sum(case when gf < ga then 1 else 0 end)::int                      as lost,
+        sum(gf)::int                                                        as goals_for,
+        sum(ga)::int                                                        as goals_against,
+        sum(case when gf > ga then 3 when gf = ga then 1 else 0 end)::int  as points
+      from (
+        select home_team_id as team_id, home_score::int as gf, away_score::int as ga
+        from matches
+        where tournament_id = NEW.tournament_id
+          and status = 'finished'
+          and phase = 'group'
+          and home_score is not null
+          and away_score is not null
+        union all
+        select away_team_id as team_id, away_score::int as gf, home_score::int as ga
+        from matches
+        where tournament_id = NEW.tournament_id
+          and status = 'finished'
+          and phase = 'group'
+          and home_score is not null
+          and away_score is not null
+      ) alle_rijen
       group by team_id
     ) sub
     where s.tournament_id = NEW.tournament_id
       and s.team_id = sub.team_id;
+
   end if;
   return NEW;
 end;
