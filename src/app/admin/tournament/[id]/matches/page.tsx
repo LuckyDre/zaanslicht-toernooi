@@ -8,24 +8,188 @@ import { Navbar } from '@/components/ui/Navbar'
 import { Button } from '@/components/ui/Button'
 
 type MS = { homeScore: number; awayScore: number; saving: boolean; saved: boolean; error: string | null }
+type RS = 'scheduled' | 'live' | 'finished'
 
-function roundStatus(ms: Match[]): 'scheduled' | 'live' | 'finished' {
+function getRoundStatus(ms: Match[]): RS {
   const active = ms.filter(m => m.status !== 'cancelled')
   if (!active.length || active.every(m => m.status === 'finished')) return 'finished'
   if (active.some(m => m.status === 'live')) return 'live'
   return 'scheduled'
 }
 
+// ─── Round navigator pill ────────────────────────────────────────────────────
+function RoundPill({ n, status, selected, onClick }: { n: number; status: RS; selected: boolean; onClick: () => void }) {
+  const bg     = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e20' : status === 'live' ? '#FF6B0025' : 'var(--bg-card)'
+  const border = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e60' : status === 'live' ? 'var(--orange)' : 'var(--border)'
+  const txtCol = selected ? '#fff' : 'var(--text-primary)'
+  return (
+    <button onClick={onClick}
+      className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl cursor-pointer active:scale-95 transition-transform"
+      style={{ width: 48, height: 48, backgroundColor: bg, border: `2px solid ${border}`, color: txtCol }}>
+      <span className="font-bold text-sm leading-none">{n}</span>
+      <span className="text-[10px] leading-none mt-0.5" style={{ color: selected ? 'rgba(255,255,255,.8)' : status === 'finished' ? '#22c55e' : status === 'live' ? 'var(--orange)' : 'var(--border)' }}>
+        {status === 'finished' ? '✓' : status === 'live' ? '●' : '·'}
+      </span>
+    </button>
+  )
+}
+
+// ─── Match card ──────────────────────────────────────────────────────────────
+function MatchCard({
+  match, s,
+  onUpd, onSaveScore, onSave,
+}: {
+  match: Match; s: MS
+  onUpd: (p: Partial<MS>) => void
+  onSaveScore: () => void
+  onSave: (status: Match['status']) => void
+}) {
+  const isLive      = match.status === 'live'
+  const isDone      = match.status === 'finished'
+  const isCancelled = match.status === 'cancelled'
+  const isScheduled = match.status === 'scheduled'
+
+  const borderColor = isLive ? 'var(--orange)' : isDone ? '#22c55e55' : isCancelled ? '#ef444455' : 'var(--border)'
+  const bgColor     = isLive ? '#FF6B000D' : isDone ? '#22c55e0a' : 'var(--bg-card)'
+  const headBg      = isLive ? '#FF6B0020' : isDone ? '#22c55e15' : 'var(--bg-elevated)'
+  const statusLabel = isLive ? '● LIVE' : isDone ? '✓ Gespeeld' : isCancelled ? '✕ Afgelast' : 'Gepland'
+  const statusColor = isLive ? 'var(--orange)' : isDone ? '#22c55e' : isCancelled ? '#ef4444' : 'var(--text-secondary)'
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ border: `1.5px solid ${borderColor}`, backgroundColor: bgColor }}>
+
+      {/* Header: field + status */}
+      <div className="flex items-center justify-between px-4 py-2.5"
+        style={{ backgroundColor: headBg, borderBottom: `1px solid ${borderColor}` }}>
+        <span className="font-bold text-sm">{match.field?.name ?? `Wedstrijd ${match.match_number}`}</span>
+        <div className="flex items-center gap-2">
+          {s.saved  && <span className="text-xs font-medium" style={{ color: '#22c55e' }}>✓ Opgeslagen</span>}
+          {s.error  && <span className="text-xs" style={{ color: '#ef4444' }}>⚠ {s.error}</span>}
+          <span className="text-xs font-bold" style={{ color: statusColor }}>{statusLabel}</span>
+        </div>
+      </div>
+
+      {/* Score section */}
+      <div className="px-4 py-4">
+        {isLive ? (
+          // Live: big centered score controls
+          <div className="flex items-center gap-2">
+            {/* Home */}
+            <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
+                <span className="font-bold text-sm truncate">{match.home_team?.name ?? '—'}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={() => onUpd({ homeScore: Math.max(0, s.homeScore - 1), saved: false })}
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-bold cursor-pointer active:scale-90"
+                  style={{ backgroundColor: 'var(--bg-base)' }}>−</button>
+                <span className="text-4xl font-bold font-mono w-12 text-center select-none">{s.homeScore}</span>
+                <button onClick={() => onUpd({ homeScore: s.homeScore + 1, saved: false })}
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-bold cursor-pointer active:scale-90"
+                  style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>+</button>
+              </div>
+            </div>
+            <div className="text-2xl font-bold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>:</div>
+            {/* Away */}
+            <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-sm truncate">{match.away_team?.name ?? '—'}</span>
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.away_team?.color || '#888' }} />
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={() => onUpd({ awayScore: Math.max(0, s.awayScore - 1), saved: false })}
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-bold cursor-pointer active:scale-90"
+                  style={{ backgroundColor: 'var(--bg-base)' }}>−</button>
+                <span className="text-4xl font-bold font-mono w-12 text-center select-none">{s.awayScore}</span>
+                <button onClick={() => onUpd({ awayScore: s.awayScore + 1, saved: false })}
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-bold cursor-pointer active:scale-90"
+                  style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>+</button>
+              </div>
+            </div>
+          </div>
+        ) : isDone ? (
+          // Finished: clean final score
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
+              <span className="font-bold truncate">{match.home_team?.name ?? '—'}</span>
+            </div>
+            <span className="text-3xl font-bold font-mono flex-shrink-0"
+              style={{ color: '#22c55e' }}>
+              {match.home_score ?? 0}–{match.away_score ?? 0}
+            </span>
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
+              <span className="font-bold truncate">{match.away_team?.name ?? '—'}</span>
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.away_team?.color || '#888' }} />
+            </div>
+          </div>
+        ) : isCancelled ? (
+          // Cancelled
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
+              <span className="font-bold truncate">{match.home_team?.name ?? '—'}</span>
+            </div>
+            <span className="text-sm px-2" style={{ color: '#ef4444' }}>afgelast</span>
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
+              <span className="font-bold truncate">{match.away_team?.name ?? '—'}</span>
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.away_team?.color || '#888' }} />
+            </div>
+          </div>
+        ) : (
+          // Scheduled
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
+              <span className="font-bold truncate">{match.home_team?.name ?? '—'}</span>
+            </div>
+            <span className="font-bold text-lg px-2" style={{ color: 'var(--text-secondary)' }}>vs</span>
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
+              <span className="font-bold truncate">{match.away_team?.name ?? '—'}</span>
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.away_team?.color || '#888' }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-2 px-4 pb-4">
+        {isScheduled && (
+          <Button size="sm" loading={s.saving} onClick={() => onSave('live')} className="flex-1">▶ Start dit veld</Button>
+        )}
+        {isLive && (
+          <>
+            <Button size="sm" variant="secondary" loading={s.saving} onClick={onSaveScore} className="flex-1">💾 Tussenstand</Button>
+            <Button size="sm" loading={s.saving} onClick={() => onSave('finished')} className="flex-1">✓ Klaar</Button>
+          </>
+        )}
+        {!isDone && !isCancelled && (
+          <Button size="sm" variant="danger" loading={s.saving}
+            onClick={() => { if (confirm('Wedstrijd aflasten?')) onSave('cancelled') }}>✕</Button>
+        )}
+        {isDone && (
+          <Button size="sm" variant="secondary" loading={s.saving} onClick={() => onSave('live')} className="flex-1">✏️ Aanpassen</Button>
+        )}
+        {(isDone || isCancelled) && (
+          <Button size="sm" variant="ghost" loading={s.saving} onClick={() => onSave('scheduled')} className="flex-1">↩ Herplannen</Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main page ───────────────────────────────────────────────────────────────
 export default function MatchesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
-  const [tournament, setTournament] = useState<Tournament | null>(null)
-  const [matches, setMatches] = useState<Match[]>([])
-  const [states, setStates] = useState<Record<string, MS>>({})
-  const [loading, setLoading] = useState(true)
-  const [roundSaving, setRoundSaving] = useState<Set<number>>(new Set())
+  const [tournament, setTournament]     = useState<Tournament | null>(null)
+  const [matches, setMatches]           = useState<Match[]>([])
+  const [states, setStates]             = useState<Record<string, MS>>({})
+  const [loading, setLoading]           = useState(true)
+  const [selectedRound, setSelectedRound] = useState<number | null>(null)
+  const [roundSaving, setRoundSaving]   = useState(false)
   const [stopAllSaving, setStopAllSaving] = useState(false)
-  const [expandedRounds, setExpandedRounds] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -43,20 +207,30 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
         list.forEach(m => { init[m.id] = { homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, saving: false, saved: false, error: null } })
         setStates(init)
 
+        // Auto-select: live round > first scheduled round > last round
         const map: Record<number, Match[]> = {}
         list.forEach(m => { const r = m.round ?? 0; if (!map[r]) map[r] = []; map[r].push(m) })
-        const toExpand = new Set<number>()
-        const sortedRounds = Object.keys(map).map(Number).sort((a, b) => a - b)
-        sortedRounds.forEach(r => { if (roundStatus(map[r]) !== 'finished') toExpand.add(r) })
-        const lastDone = [...sortedRounds].reverse().find(r => roundStatus(map[r]) === 'finished')
-        if (lastDone !== undefined) toExpand.add(lastDone)
-        setExpandedRounds(toExpand)
+        const sorted = Object.keys(map).map(Number).sort((a, b) => a - b)
+        const liveR  = sorted.find(r => map[r].some(m => m.status === 'live'))
+        const schedR = sorted.find(r => map[r].some(m => m.status === 'scheduled'))
+        setSelectedRound(liveR ?? schedR ?? sorted[sorted.length - 1] ?? null)
         setLoading(false)
       })
   }, [id])
 
   const upd = (matchId: string, p: Partial<MS>) =>
     setStates(prev => ({ ...prev, [matchId]: { ...prev[matchId], ...p } }))
+
+  // Auto-advance after finishing a round: jump to next non-finished round
+  const tryAdvance = (updatedList: Match[], fromRound: number) => {
+    const map: Record<number, Match[]> = {}
+    updatedList.forEach(m => { const r = m.round ?? 0; if (!map[r]) map[r] = []; map[r].push(m) })
+    if (getRoundStatus(map[fromRound] ?? []) === 'finished') {
+      const sorted = Object.keys(map).map(Number).sort((a, b) => a - b)
+      const next = sorted.find(r => r > fromRound && getRoundStatus(map[r]) !== 'finished')
+      if (next !== undefined) setTimeout(() => setSelectedRound(next), 400)
+    }
+  }
 
   const saveMatch = async (match: Match, status: Match['status']) => {
     const s = states[match.id]; if (!s) return
@@ -71,10 +245,15 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     if (error) {
       upd(match.id, { saving: false, error: error.message })
     } else {
-      setMatches(prev => prev.map(m => m.id === match.id
-        ? { ...m, status, home_score: status === 'cancelled' ? null : s.homeScore, away_score: status === 'cancelled' ? null : s.awayScore } : m))
+      const updated = matches.map(m => m.id === match.id
+        ? { ...m, status, home_score: status === 'cancelled' ? null : s.homeScore, away_score: status === 'cancelled' ? null : s.awayScore }
+        : m)
+      setMatches(updated)
       upd(match.id, { saving: false, saved: true })
       setTimeout(() => upd(match.id, { saved: false }), 2500)
+      if ((status === 'finished' || status === 'cancelled') && match.round != null) {
+        tryAdvance(updated, match.round)
+      }
     }
   }
 
@@ -91,8 +270,10 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     }
   }
 
-  const startRound = async (roundNum: number, toStart: Match[]) => {
-    setRoundSaving(p => new Set([...p, roundNum]))
+  const startRound = async (roundMatches: Match[]) => {
+    const toStart = roundMatches.filter(m => m.status === 'scheduled')
+    if (!toStart.length) return
+    setRoundSaving(true)
     const now = new Date().toISOString()
     await Promise.all(toStart.map(m =>
       supabase.from('matches').update({ status: 'live', started_at: now, home_score: 0, away_score: 0 }).eq('id', m.id)
@@ -100,31 +281,28 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     setMatches(prev => prev.map(m =>
       toStart.find(t => t.id === m.id) ? { ...m, status: 'live', started_at: now, home_score: 0, away_score: 0 } : m
     ))
-    setStates(prev => {
-      const n = { ...prev }
-      toStart.forEach(m => { n[m.id] = { ...n[m.id], homeScore: 0, awayScore: 0 } })
-      return n
-    })
-    setRoundSaving(p => { const n = new Set(p); n.delete(roundNum); return n })
+    setStates(prev => { const n = { ...prev }; toStart.forEach(m => { n[m.id] = { ...n[m.id], homeScore: 0, awayScore: 0 } }); return n })
+    setRoundSaving(false)
   }
 
-  const stopRound = async (roundNum: number, toLive: Match[]) => {
+  const stopRound = async (roundNum: number, roundMatches: Match[]) => {
+    const toLive = roundMatches.filter(m => m.status === 'live')
+    if (!toLive.length) return
     if (!confirm(`Ronde ${roundNum}: ${toLive.length} wedstrijd${toLive.length > 1 ? 'en' : ''} afsluiten?`)) return
-    setRoundSaving(p => new Set([...p, roundNum]))
+    setRoundSaving(true)
     const now = new Date().toISOString()
     await Promise.all(toLive.map(m => {
       const s = states[m.id]
-      return supabase.from('matches').update({
-        status: 'finished', finished_at: now,
-        home_score: s?.homeScore ?? 0, away_score: s?.awayScore ?? 0,
-      }).eq('id', m.id)
+      return supabase.from('matches').update({ status: 'finished', finished_at: now, home_score: s?.homeScore ?? 0, away_score: s?.awayScore ?? 0 }).eq('id', m.id)
     }))
-    setMatches(prev => prev.map(m => {
+    const updated = matches.map(m => {
       if (!toLive.find(t => t.id === m.id)) return m
       const s = states[m.id]
-      return { ...m, status: 'finished', finished_at: now, home_score: s?.homeScore ?? 0, away_score: s?.awayScore ?? 0 }
-    }))
-    setRoundSaving(p => { const n = new Set(p); n.delete(roundNum); return n })
+      return { ...m, status: 'finished' as Match['status'], finished_at: now, home_score: s?.homeScore ?? 0, away_score: s?.awayScore ?? 0 }
+    })
+    setMatches(updated)
+    setRoundSaving(false)
+    tryAdvance(updated, roundNum)
   }
 
   const stopAll = async () => {
@@ -134,10 +312,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     const now = new Date().toISOString()
     await Promise.all(live.map(m => {
       const s = states[m.id]
-      return supabase.from('matches').update({
-        status: 'finished', finished_at: now,
-        home_score: s?.homeScore ?? 0, away_score: s?.awayScore ?? 0,
-      }).eq('id', m.id)
+      return supabase.from('matches').update({ status: 'finished', finished_at: now, home_score: s?.homeScore ?? 0, away_score: s?.awayScore ?? 0 }).eq('id', m.id)
     }))
     setMatches(prev => prev.map(m => {
       if (m.status !== 'live') return m
@@ -152,50 +327,36 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     matches.forEach(m => { const r = m.round ?? 0; if (!map[r]) map[r] = []; map[r].push(m) })
     return Object.entries(map)
       .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([r, ms]) => ({
-        round: Number(r),
-        matches: [...ms].sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0)),
-      }))
+      .map(([r, ms]) => ({ round: Number(r), matches: [...ms].sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0)) }))
   }, [matches])
 
-  const liveCount = matches.filter(m => m.status === 'live').length
-  const doneCount = matches.filter(m => m.status === 'finished').length
-  const finishedRounds = rounds.filter(({ matches: ms }) => roundStatus(ms) === 'finished')
-  const allFinishedCollapsed = finishedRounds.every(({ round }) => !expandedRounds.has(round))
+  const currentRound = rounds.find(r => r.round === selectedRound)
+  const liveCount    = matches.filter(m => m.status === 'live').length
+  const doneCount    = matches.filter(m => m.status === 'finished').length
+  const doneRounds   = rounds.filter(r => getRoundStatus(r.matches) === 'finished').length
+  const progress     = rounds.length > 0 ? (doneRounds / rounds.length) * 100 : 0
 
-  const toggleRound = (r: number) =>
-    setExpandedRounds(prev => { const n = new Set(prev); n.has(r) ? n.delete(r) : n.add(r); return n })
-
-  const toggleFinishedRounds = () => {
-    if (allFinishedCollapsed) {
-      setExpandedRounds(prev => { const n = new Set(prev); finishedRounds.forEach(({ round }) => n.add(round)); return n })
-    } else {
-      setExpandedRounds(prev => { const n = new Set(prev); finishedRounds.forEach(({ round }) => n.delete(round)); return n })
-    }
-  }
+  // Selected round derived
+  const crStatus    = currentRound ? getRoundStatus(currentRound.matches) : null
+  const crScheduled = currentRound?.matches.filter(m => m.status === 'scheduled') ?? []
+  const crLive      = currentRound?.matches.filter(m => m.status === 'live') ?? []
 
   return (
     <div className="min-h-screen pb-8" style={{ backgroundColor: 'var(--bg-base)' }}>
       <Navbar isAdmin />
-      <main className="max-w-2xl mx-auto px-4 py-6">
-        <Link href="/admin" className="text-sm mb-4 inline-block hover:opacity-80"
-          style={{ color: 'var(--text-secondary)' }}>
-          ← Admin dashboard
-        </Link>
+      <main className="max-w-xl mx-auto px-4 py-5">
 
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+        {/* ── Top bar ── */}
+        <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-xl font-bold">{tournament?.name ?? '...'}</h1>
-            <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-              {doneCount}/{matches.length} gespeeld{liveCount > 0 ? ` · ${liveCount} live` : ''} · {rounds.length} rondes
-            </p>
+            <Link href="/admin" className="text-xs hover:opacity-80 mb-1 inline-block" style={{ color: 'var(--text-secondary)' }}>
+              ← Admin dashboard
+            </Link>
+            <h1 className="text-xl font-bold leading-tight">{tournament?.name ?? '…'}</h1>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-shrink-0 mt-4">
             {liveCount > 0 && (
-              <Button size="sm" variant="danger" loading={stopAllSaving} onClick={stopAll}>
-                ■ Stop alle ({liveCount})
-              </Button>
+              <Button size="sm" variant="danger" loading={stopAllSaving} onClick={stopAll}>■ Stop alles</Button>
             )}
             <Link href={`/tournament/${id}`} target="_blank">
               <Button size="sm" variant="ghost">Live ↗</Button>
@@ -203,267 +364,115 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
 
-        {/* Finished rounds toggle */}
-        {finishedRounds.length > 0 && (
-          <button onClick={toggleFinishedRounds}
-            className="text-xs mb-5 cursor-pointer hover:opacity-80"
-            style={{ color: 'var(--text-secondary)' }}>
-            {allFinishedCollapsed
-              ? `▼ Toon ${finishedRounds.length} gespeelde ronde${finishedRounds.length > 1 ? 's' : ''}`
-              : '▲ Verberg gespeelde rondes'}
-          </button>
-        )}
-
         {loading ? (
-          <div className="flex justify-center py-12">
+          <div className="flex justify-center py-16">
             <div className="w-8 h-8 rounded-full border-2 animate-spin"
               style={{ borderColor: 'var(--orange)', borderTopColor: 'transparent' }} />
           </div>
-        ) : (
-          // Timeline container — rounds connected by a vertical line
-          <div className="relative">
-            {/* Vertical timeline line */}
-            <div className="absolute left-[23px] top-4 bottom-4 w-px"
-              style={{ backgroundColor: 'var(--border)' }} />
+        ) : <>
 
-            <div className="flex flex-col gap-4">
-              {rounds.map(({ round, matches: rm }) => {
-                const rs         = roundStatus(rm)
-                const isExpanded = expandedRounds.has(round)
-                const scheduled  = rm.filter(m => m.status === 'scheduled')
-                const live       = rm.filter(m => m.status === 'live')
-                const done       = rm.filter(m => m.status === 'finished' || m.status === 'cancelled').length
-                const isSaving   = roundSaving.has(round)
+          {/* ── Progress ── */}
+          <div className="mb-5 p-3 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>
+              <span className="font-semibold">Voortgang toernooi</span>
+              <span>{doneRounds}/{rounds.length} rondes  ·  {doneCount}/{matches.length} wedstrijden</span>
+            </div>
+            <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+              <div className="h-full rounded-full transition-all duration-700"
+                style={{ width: `${progress}%`, backgroundColor: progress === 100 ? '#22c55e' : 'var(--orange)' }} />
+            </div>
+            {liveCount > 0 && (
+              <p className="text-xs mt-2 font-semibold" style={{ color: 'var(--orange)' }}>● {liveCount} wedstrijd{liveCount > 1 ? 'en' : ''} live</p>
+            )}
+          </div>
 
-                const dotColor    = rs === 'live' ? 'var(--orange)' : rs === 'finished' ? '#22c55e' : 'var(--bg-elevated)'
-                const dotBorder   = rs === 'live' ? 'var(--orange)' : rs === 'finished' ? '#22c55e' : 'var(--border)'
-                const cardBorder  = rs === 'live' ? 'var(--orange)' : 'var(--border)'
-                const cardBg      = rs === 'live' ? '#FF6B0010' : 'var(--bg-card)'
+          {/* ── Round navigator ── */}
+          <div className="mb-1">
+            <p className="text-xs mb-2 font-semibold" style={{ color: 'var(--text-secondary)' }}>RONDES</p>
+          </div>
+          <div className="overflow-x-auto -mx-4 px-4 pb-1 mb-5">
+            <div className="flex gap-2" style={{ width: 'max-content' }}>
+              {rounds.map(({ round, matches: rm }) => (
+                <RoundPill key={round} n={round} status={getRoundStatus(rm)}
+                  selected={round === selectedRound} onClick={() => setSelectedRound(round)} />
+              ))}
+            </div>
+          </div>
 
+          {/* ── Round detail ── */}
+          {currentRound && <>
+            {/* Round header */}
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-2xl font-bold">
+                  Ronde {currentRound.round}
+                  <span className="text-base font-normal ml-1" style={{ color: 'var(--text-secondary)' }}>
+                    / {rounds.length}
+                  </span>
+                </h2>
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                  {crStatus === 'live'
+                    ? `${crLive.length} live · ${currentRound.matches.filter(m => m.status === 'finished').length}/${currentRound.matches.length} klaar`
+                    : crStatus === 'finished'
+                    ? `Alle ${currentRound.matches.filter(m => m.status !== 'cancelled').length} wedstrijden gespeeld`
+                    : `${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''} staan klaar`}
+                </p>
+              </div>
+              {crStatus === 'live' && (
+                <div className="px-3 py-1.5 rounded-full text-sm font-bold"
+                  style={{ backgroundColor: '#FF6B0020', color: 'var(--orange)', border: '1px solid #FF6B0050' }}>
+                  ● LIVE
+                </div>
+              )}
+              {crStatus === 'finished' && (
+                <div className="px-3 py-1.5 rounded-full text-sm font-bold"
+                  style={{ backgroundColor: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e50' }}>
+                  ✓ Gespeeld
+                </div>
+              )}
+            </div>
+
+            {/* Match cards */}
+            <div className="flex flex-col gap-3 mb-4">
+              {currentRound.matches.map(match => {
+                const s = states[match.id]
+                if (!s) return null
                 return (
-                  <div key={round} className="flex items-start gap-3">
-
-                    {/* Timeline dot */}
-                    <div className="flex-shrink-0 mt-3.5 z-10">
-                      <div className="w-[18px] h-[18px] rounded-full border-2 flex items-center justify-center"
-                        style={{ backgroundColor: dotColor, borderColor: dotBorder, boxShadow: rs === 'live' ? '0 0 0 3px #FF6B0030' : 'none' }}>
-                        {rs === 'finished' && <span className="text-white text-[9px] font-bold leading-none">✓</span>}
-                        {rs === 'live' && <span className="block w-2 h-2 rounded-full bg-white animate-pulse" />}
-                      </div>
-                    </div>
-
-                    {/* Round card */}
-                    <div className="flex-1 min-w-0 rounded-2xl overflow-hidden"
-                      style={{ border: `1.5px solid ${cardBorder}`, backgroundColor: cardBg }}>
-
-                      {/* ── Round header (click to expand/collapse) ── */}
-                      <button
-                        className="w-full flex items-center justify-between px-4 py-3 cursor-pointer text-left gap-2"
-                        onClick={() => toggleRound(round)}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-bold text-sm whitespace-nowrap">Ronde {round}</span>
-                          <span className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
-                            {rs === 'live'
-                              ? `${live.length} live · ${done}/${rm.length} klaar`
-                              : rs === 'finished'
-                              ? `${done} gespeeld`
-                              : `${scheduled.length} veld${scheduled.length !== 1 ? 'en' : ''} gepland`}
-                          </span>
-                        </div>
-                        <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
-                          {isExpanded ? '▲' : '▼'}
-                        </span>
-                      </button>
-
-                      {/* ── Match list ── */}
-                      {isExpanded && (
-                        <div style={{ borderTop: '1px solid var(--border)' }}>
-                          {rm.map((match) => {
-                            const s          = states[match.id]; if (!s) return null
-                            const isLive      = match.status === 'live'
-                            const isDone      = match.status === 'finished'
-                            const isCancelled = match.status === 'cancelled'
-                            const isScheduled = match.status === 'scheduled'
-
-                            return (
-                              <div key={match.id}
-                                style={{
-                                  padding: '10px 16px',
-                                  borderBottom: '1px solid var(--border)',
-                                  backgroundColor: isLive ? '#FF6B0008' : 'transparent',
-                                }}>
-
-                                {/* Field label + match status */}
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                                    {match.field?.name ?? `Wedstrijd ${match.match_number}`}
-                                  </span>
-                                  <div className="flex items-center gap-2">
-                                    {s.error && <span className="text-xs" style={{ color: '#ef4444' }}>⚠ {s.error}</span>}
-                                    {s.saved && <span className="text-xs font-medium" style={{ color: '#22c55e' }}>✓ Opgeslagen</span>}
-                                    {isLive      && <span className="text-xs font-bold" style={{ color: 'var(--orange)' }}>● LIVE</span>}
-                                    {isDone      && <span className="text-xs font-medium" style={{ color: '#22c55e' }}>✓ Gespeeld</span>}
-                                    {isCancelled && <span className="text-xs" style={{ color: '#ef4444' }}>✕ Afgelast</span>}
-                                  </div>
-                                </div>
-
-                                {/* Teams + score */}
-                                <div className="flex items-center gap-2 mb-2.5">
-                                  {/* Home */}
-                                  <div className="flex-1 flex items-center gap-1.5 min-w-0">
-                                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                      style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
-                                    <span className="text-sm font-bold truncate">{match.home_team?.name ?? '—'}</span>
-                                  </div>
-
-                                  {/* Score / controls */}
-                                  <div className="flex-shrink-0">
-                                    {isDone ? (
-                                      <span className="text-lg font-bold font-mono px-2">
-                                        {match.home_score ?? 0}–{match.away_score ?? 0}
-                                      </span>
-                                    ) : isCancelled ? (
-                                      <span className="text-xs px-2" style={{ color: 'var(--text-secondary)' }}>afgelast</span>
-                                    ) : isLive ? (
-                                      <div className="flex items-center gap-0.5">
-                                        <button
-                                          onClick={() => upd(match.id, { homeScore: Math.max(0, s.homeScore - 1), saved: false })}
-                                          className="w-8 h-8 rounded-lg flex items-center justify-center font-bold cursor-pointer active:scale-95"
-                                          style={{ backgroundColor: 'var(--bg-base)' }}>−</button>
-                                        <span className="text-2xl font-bold font-mono w-8 text-center select-none">{s.homeScore}</span>
-                                        <button
-                                          onClick={() => upd(match.id, { homeScore: s.homeScore + 1, saved: false })}
-                                          className="w-8 h-8 rounded-lg flex items-center justify-center font-bold cursor-pointer active:scale-95"
-                                          style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>+</button>
-                                        <span className="text-base font-bold mx-1.5" style={{ color: 'var(--text-secondary)' }}>:</span>
-                                        <button
-                                          onClick={() => upd(match.id, { awayScore: Math.max(0, s.awayScore - 1), saved: false })}
-                                          className="w-8 h-8 rounded-lg flex items-center justify-center font-bold cursor-pointer active:scale-95"
-                                          style={{ backgroundColor: 'var(--bg-base)' }}>−</button>
-                                        <span className="text-2xl font-bold font-mono w-8 text-center select-none">{s.awayScore}</span>
-                                        <button
-                                          onClick={() => upd(match.id, { awayScore: s.awayScore + 1, saved: false })}
-                                          className="w-8 h-8 rounded-lg flex items-center justify-center font-bold cursor-pointer active:scale-95"
-                                          style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>+</button>
-                                      </div>
-                                    ) : (
-                                      <span className="text-sm font-medium px-3" style={{ color: 'var(--text-secondary)' }}>vs</span>
-                                    )}
-                                  </div>
-
-                                  {/* Away */}
-                                  <div className="flex-1 flex items-center gap-1.5 min-w-0 justify-end">
-                                    <span className="text-sm font-bold truncate">{match.away_team?.name ?? '—'}</span>
-                                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                      style={{ backgroundColor: match.away_team?.color || '#888' }} />
-                                  </div>
-                                </div>
-
-                                {/* Per-match action buttons */}
-                                <div className="flex gap-2">
-                                  {isScheduled && (
-                                    <Button size="sm" loading={s.saving}
-                                      onClick={() => saveMatch(match, 'live')} className="flex-1">
-                                      ▶ Start
-                                    </Button>
-                                  )}
-                                  {isLive && (
-                                    <>
-                                      <Button size="sm" variant="secondary" loading={s.saving}
-                                        onClick={() => saveScore(match)} className="flex-1">
-                                        💾 Opslaan
-                                      </Button>
-                                      <Button size="sm" loading={s.saving}
-                                        onClick={() => saveMatch(match, 'finished')} className="flex-1">
-                                        ✓ Klaar
-                                      </Button>
-                                    </>
-                                  )}
-                                  {!isDone && !isCancelled && (
-                                    <Button size="sm" variant="danger" loading={s.saving}
-                                      onClick={() => { if (confirm('Wedstrijd aflasten?')) saveMatch(match, 'cancelled') }}>
-                                      ✕
-                                    </Button>
-                                  )}
-                                  {isDone && (
-                                    <Button size="sm" variant="secondary" loading={s.saving}
-                                      onClick={() => saveMatch(match, 'live')} className="flex-1">
-                                      ✏️ Aanpassen
-                                    </Button>
-                                  )}
-                                  {(isDone || isCancelled) && (
-                                    <Button size="sm" variant="ghost" loading={s.saving}
-                                      onClick={() => saveMatch(match, 'scheduled')} className="flex-1">
-                                      ↩ Herplannen
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          })}
-
-                          {/* ── Prominent round action button ── */}
-                          {(scheduled.length > 0 || live.length > 0) && (
-                            <div className="p-3 flex flex-col gap-2">
-                              {scheduled.length > 0 && (
-                                <button
-                                  onClick={() => startRound(round, scheduled)}
-                                  disabled={isSaving}
-                                  className="w-full py-4 rounded-xl font-bold text-base cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
-                                  style={{ backgroundColor: 'var(--orange)', color: '#fff', fontSize: '15px' }}>
-                                  {isSaving
-                                    ? 'Starten…'
-                                    : `▶ Start ronde ${round}  ·  ${scheduled.length} veld${scheduled.length !== 1 ? 'en' : ''}`}
-                                </button>
-                              )}
-                              {live.length > 0 && (
-                                <button
-                                  onClick={() => stopRound(round, live)}
-                                  disabled={isSaving}
-                                  className="w-full py-4 rounded-xl font-bold text-base cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
-                                  style={{ backgroundColor: '#ef4444', color: '#fff', fontSize: '15px' }}>
-                                  {isSaving
-                                    ? 'Stoppen…'
-                                    : `■ Stop ronde ${round}  ·  ${live.length} live`}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Collapsed summary for scheduled rounds: show the big start button even when collapsed */}
-                      {!isExpanded && scheduled.length > 0 && (
-                        <div className="px-3 pb-3" style={{ borderTop: '1px solid var(--border)' }}>
-                          <button
-                            onClick={() => startRound(round, scheduled)}
-                            disabled={isSaving}
-                            className="w-full py-4 rounded-xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform mt-3"
-                            style={{ backgroundColor: 'var(--orange)', color: '#fff', fontSize: '15px' }}>
-                            {isSaving
-                              ? 'Starten…'
-                              : `▶ Start ronde ${round}  ·  ${scheduled.length} veld${scheduled.length !== 1 ? 'en' : ''}`}
-                          </button>
-                        </div>
-                      )}
-                      {!isExpanded && live.length > 0 && (
-                        <div className="px-3 pb-3" style={{ borderTop: '1px solid var(--border)' }}>
-                          <button
-                            onClick={() => stopRound(round, live)}
-                            disabled={isSaving}
-                            className="w-full py-4 rounded-xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform mt-3"
-                            style={{ backgroundColor: '#ef4444', color: '#fff', fontSize: '15px' }}>
-                            {isSaving ? 'Stoppen…' : `■ Stop ronde ${round}  ·  ${live.length} live`}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <MatchCard key={match.id} match={match} s={s}
+                    onUpd={p => upd(match.id, p)}
+                    onSaveScore={() => saveScore(match)}
+                    onSave={status => saveMatch(match, status)}
+                  />
                 )
               })}
             </div>
-          </div>
-        )}
+
+            {/* ── BIG round action button ── */}
+            {crScheduled.length > 0 && (
+              <button onClick={() => startRound(currentRound.matches)} disabled={roundSaving}
+                className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
+                style={{ padding: '18px 24px', backgroundColor: 'var(--orange)', color: '#fff', fontSize: '17px' }}>
+                {roundSaving
+                  ? 'Starten…'
+                  : `▶  Start ronde ${currentRound.round}${crScheduled.length < currentRound.matches.length ? `  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}` : `  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}`}`}
+              </button>
+            )}
+            {crLive.length > 0 && (
+              <button onClick={() => stopRound(currentRound.round, currentRound.matches)} disabled={roundSaving}
+                className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform mt-2"
+                style={{ padding: '18px 24px', backgroundColor: '#ef4444', color: '#fff', fontSize: '17px' }}>
+                {roundSaving ? 'Stoppen…' : `■  Sluit ronde ${currentRound.round} af  ·  ${crLive.length} live`}
+              </button>
+            )}
+            {crStatus === 'finished' && (
+              <p className="text-center text-sm mt-3" style={{ color: 'var(--text-secondary)' }}>
+                {selectedRound !== rounds[rounds.length - 1]?.round
+                  ? 'Ronde klaar — selecteer de volgende ronde hierboven ↑'
+                  : '🏆 Alle rondes gespeeld!'}
+              </p>
+            )}
+          </>}
+        </>}
       </main>
     </div>
   )
