@@ -49,54 +49,52 @@ function sortStanding(a: Standing, b: Standing) {
   return b.goals_for - a.goals_for
 }
 
-/**
- * Top N team IDs in seed order, using the "best runner-up" principle:
- *
- *   Round 1: all pool rank-1 teams (winners), sorted by overall performance
- *   Round 2: all pool rank-2 teams, sorted by overall performance  ← best runner-up
- *   Round 3: all pool rank-3 teams, etc.
- *
- * Example – 3 pools, semi-final (4 spots):
- *   → A1, B1, C1 (all 3 winners) + best of A2/B2/C2 (1 best runner-up)
- *   Never picks A2 just because it's pool A — it picks whoever has the best record.
- */
-function getSeeds(standings: Standing[], numPools: number, count: number): string[] {
-  if (numPools <= 1) {
-    return [...standings].sort(sortStanding).slice(0, count).map(s => s.team_id)
-  }
-
-  // Sort each pool's standings by performance
-  const byPool = Array.from({ length: numPools }, (_, p) =>
-    standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)
-  )
-
-  // Take teams rank-by-rank; within the same rank pick the best performer first
-  const result: string[] = []
-  for (let rank = 0; result.length < count; rank++) {
-    const sameRank = byPool
-      .map(pool => pool[rank])
-      .filter((s): s is Standing => !!s)
-      .sort(sortStanding) // best runner-up comes first
-
-    if (sameRank.length === 0) break
-    for (const s of sameRank) {
-      if (result.length >= count) break
-      result.push(s.team_id)
-    }
-  }
-  return result
+/** Return the top-ranked team ID from each pool (pool winners) */
+function getPoolWinners(standings: Standing[], numPools: number): string[] {
+  return Array.from({ length: numPools }, (_, p) =>
+    standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)[0]?.team_id
+  ).filter(Boolean) as string[]
 }
 
-/** Standard single-elimination bracket pairings from seed list */
+/**
+ * Generate round-robin rounds for the finale poule.
+ * Uses the circle algorithm — each team appears at most once per round,
+ * so matches can be played simultaneously on different fields.
+ * Returns rounds as arrays of [homeId, awayId] pairs.
+ */
+function generateFinalePouleRounds(teamIds: string[]): [string, string][][] {
+  const t: (string | null)[] = [...teamIds]
+  if (t.length % 2 !== 0) t.push(null) // bye slot
+  const n = t.length
+  const rounds: [string, string][][] = []
+
+  for (let r = 0; r < n - 1; r++) {
+    const roundMatches: [string, string][] = []
+    for (let i = 0; i < n / 2; i++) {
+      const home = t[i], away = t[n - 1 - i]
+      if (home && away) roundMatches.push([home, away])
+    }
+    rounds.push(roundMatches)
+    // Rotate: keep t[0] fixed
+    t.splice(1, 0, t.pop()!)
+  }
+  return rounds
+}
+
+/** For single-pool knockout: standard bracket seedings */
 function seedsToMatchups(seeds: string[]): [string, string][] {
   const n = seeds.length
   if (n === 2) return [[seeds[0], seeds[1]]]
   if (n === 4) return [[seeds[0], seeds[3]], [seeds[1], seeds[2]]]
   if (n === 8) return [[seeds[0], seeds[7]], [seeds[3], seeds[4]], [seeds[1], seeds[6]], [seeds[2], seeds[5]]]
-  // Generic: pair top vs bottom
   const pairs: [string, string][] = []
   for (let i = 0, j = n - 1; i < j; i++, j--) pairs.push([seeds[i], seeds[j]])
   return pairs
+}
+
+/** Top N seeds from single-pool standings */
+function getSeeds(standings: Standing[], count: number): string[] {
+  return [...standings].sort(sortStanding).slice(0, count).map(s => s.team_id)
 }
 
 function getWinner(m: Match): string {
@@ -429,95 +427,107 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
       const groupMs  = matches.filter(m => m.phase === 'group')
       const koMs     = matches.filter(m => m.phase !== 'group')
-      const maxMatchNum  = matches.reduce((max, m) => Math.max(max, m.match_number ?? 0), 0)
+      const maxMatchNum   = matches.reduce((max, m) => Math.max(max, m.match_number ?? 0), 0)
       const maxGroupRound = groupMs.reduce((max, m) => Math.max(max, m.round ?? 0), 0)
       const maxKORound    = koMs.reduce((max, m) => Math.max(max, m.round ?? 0), maxGroupRound)
-      const numFields = Math.max(fields.length, 1)
+      const numFields     = Math.max(fields.length, 1)
+      const isMultiPool   = (tournament.num_pools ?? 1) > 1
 
-      let matchups: [string, string][]
-      let phase: Match['phase']
+      const insertRows: object[] = []
+      let mn       = maxMatchNum + 1
+      let roundNum = maxKORound + 1
 
-      if (koMs.length === 0) {
-        // ── First KO round: seed from group standings ──────────────────────
-        const count = FINALS_COUNT[tournament.finals_type] ?? 2
-        const seeds = getSeeds(currentStandings, tournament.num_pools, count)
-        if (seeds.length < 2) { alert('Niet genoeg teams in de standen om finales te genereren.'); setGeneratingKO(false); return }
-        phase    = FINALS_PHASE[tournament.finals_type] ?? 'final'
-        matchups = seedsToMatchups(seeds)
+      if (isMultiPool) {
+        // ── Multi-pool: finale poule (cross-pool round-robin) ──────────────
+        // Poule winners (1 per pool) play a full round-robin — never same pool vs same pool.
+        // Each round has floor(numWinners/2) simultaneous matches on different fields.
+        const winners = getPoolWinners(currentStandings, tournament.num_pools)
+        if (winners.length < 2) {
+          alert('Niet genoeg poulewinnaars gevonden. Zijn alle groepswedstrijden afgerond?')
+          setGeneratingKO(false); return
+        }
+        const rounds = generateFinalePouleRounds(winners)
+        for (const roundMatches of rounds) {
+          for (let i = 0; i < roundMatches.length; i += numFields) {
+            const chunk = roundMatches.slice(i, i + numFields)
+            chunk.forEach(([home, away], fi) => {
+              insertRows.push({
+                tournament_id: tournament.id,
+                home_team_id: home, away_team_id: away,
+                round: roundNum, match_number: mn++,
+                phase: 'final' as const,
+                status: 'scheduled' as const,
+                field_id: fields[fi]?.id ?? null,
+              })
+            })
+            roundNum++
+          }
+        }
 
       } else {
-        // ── Next KO round: seed from winners (and losers for 3rd place) ────
-        // Determine the latest existing KO phase
-        const latestPhase = koMs.reduce<Match['phase']>((latest, m) =>
-          (PHASE_ORDER[m.phase] ?? 0) > (PHASE_ORDER[latest] ?? 0) ? m.phase : latest
-        , 'quarter_final')
+        // ── Single-pool: knockout bracket ──────────────────────────────────
+        let matchups: [string, string][]
+        let phase: Match['phase']
 
-        const phaseMs = [...koMs.filter(m => m.phase === latestPhase)]
-          .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
-
-        if (latestPhase === 'semi_final') {
-          // Generate final + 3rd place in the same round
-          const newRound = maxKORound + 1
-          const insertRows = [
-            // 3rd place: losers of both semis
-            {
-              tournament_id: tournament.id,
-              home_team_id:  getLoser(phaseMs[0]),
-              away_team_id:  getLoser(phaseMs[1]),
-              round: newRound,
-              match_number: maxMatchNum + 1,
-              phase: 'third_place' as const,
-              status: 'scheduled' as const,
-              field_id: fields[numFields > 1 ? 1 : 0]?.id ?? null,
-            },
-            // Final: winners of both semis
-            {
-              tournament_id: tournament.id,
-              home_team_id:  getWinner(phaseMs[0]),
-              away_team_id:  getWinner(phaseMs[1]),
-              round: newRound,
-              match_number: maxMatchNum + 2,
-              phase: 'final' as const,
-              status: 'scheduled' as const,
-              field_id: fields[0]?.id ?? null,
-            },
-          ]
-          await supabase.from('matches').insert(insertRows)
-          const updated = await reloadMatches()
-          if (updated) setTimeout(() => setSelectedRound(newRound), 200)
-          setGeneratingKO(false)
-          return
-
-        } else if (latestPhase === 'quarter_final') {
-          phase    = 'semi_final'
-          matchups = seedsToMatchups(phaseMs.map(getWinner))
+        if (koMs.length === 0) {
+          const count = FINALS_COUNT[tournament.finals_type] ?? 2
+          const seeds = getSeeds(currentStandings, count)
+          if (seeds.length < 2) { alert('Niet genoeg teams in de standen om finales te genereren.'); setGeneratingKO(false); return }
+          phase    = FINALS_PHASE[tournament.finals_type] ?? 'final'
+          matchups = seedsToMatchups(seeds)
         } else {
-          setGeneratingKO(false); return
+          const latestPhase = koMs.reduce<Match['phase']>((latest, m) =>
+            (PHASE_ORDER[m.phase] ?? 0) > (PHASE_ORDER[latest] ?? 0) ? m.phase : latest
+          , 'quarter_final')
+          const phaseMs = [...koMs.filter(m => m.phase === latestPhase)]
+            .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
+
+          if (latestPhase === 'semi_final') {
+            // Final + 3rd place in the same round
+            insertRows.push({
+              tournament_id: tournament.id,
+              home_team_id: getLoser(phaseMs[0]), away_team_id: getLoser(phaseMs[1]),
+              round: roundNum, match_number: mn++,
+              phase: 'third_place' as const, status: 'scheduled' as const,
+              field_id: fields[numFields > 1 ? 1 : 0]?.id ?? null,
+            })
+            insertRows.push({
+              tournament_id: tournament.id,
+              home_team_id: getWinner(phaseMs[0]), away_team_id: getWinner(phaseMs[1]),
+              round: roundNum, match_number: mn++,
+              phase: 'final' as const, status: 'scheduled' as const,
+              field_id: fields[0]?.id ?? null,
+            })
+            await supabase.from('matches').insert(insertRows)
+            const upd2 = await reloadMatches()
+            if (upd2) setTimeout(() => setSelectedRound(roundNum), 200)
+            setGeneratingKO(false); return
+          } else if (latestPhase === 'quarter_final') {
+            phase    = 'semi_final'
+            matchups = seedsToMatchups(phaseMs.map(getWinner))
+          } else { setGeneratingKO(false); return }
+        }
+
+        for (let i = 0; i < matchups.length; i += numFields) {
+          const chunk = matchups.slice(i, i + numFields)
+          chunk.forEach(([home, away], fi) => {
+            insertRows.push({
+              tournament_id: tournament.id,
+              home_team_id: home, away_team_id: away,
+              round: roundNum, match_number: mn++,
+              phase, status: 'scheduled' as const,
+              field_id: fields[fi]?.id ?? null,
+            })
+          })
+          roundNum++
         }
       }
 
-      // ── Build rows and insert ──────────────────────────────────────────────
-      const insertRows: object[] = []
-      let mn = maxMatchNum + 1
-      let roundNum = maxKORound + 1
-      for (let i = 0; i < matchups.length; i += numFields) {
-        const chunk = matchups.slice(i, i + numFields)
-        chunk.forEach(([home, away], fi) => {
-          insertRows.push({
-            tournament_id: tournament.id,
-            home_team_id: home, away_team_id: away,
-            round: roundNum, match_number: mn++,
-            phase, status: 'scheduled' as const,
-            field_id: fields[fi]?.id ?? null,
-          })
-        })
-        roundNum++
-      }
       await supabase.from('matches').insert(insertRows)
       const updated = await reloadMatches()
       if (updated) {
-        const newRound = insertRows.length > 0 ? maxKORound + 1 : null
-        if (newRound) setTimeout(() => setSelectedRound(newRound), 200)
+        const newRound = maxKORound + 1
+        setTimeout(() => setSelectedRound(newRound), 200)
       }
     } catch (err) {
       console.error(err)
@@ -558,18 +568,26 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const allLatestKODone = !!latestKOPhase &&
     koMatches.filter(m => m.phase === latestKOPhase).every(m => m.status === 'finished' || m.status === 'cancelled')
 
+  const isMultiPool = (tournament?.num_pools ?? 1) > 1
+
   const canGenerateFirst = !!tournament && tournament.finals_type !== 'none' && allGroupDone && koMatches.length === 0
-  const canGenerateNext  = !!latestKOPhase && allLatestKODone
+  // Next-round button only makes sense for single-pool knockout; multi-pool finale poule is one shot
+  const canGenerateNext  = !isMultiPool && !!latestKOPhase && allLatestKODone
     && latestKOPhase !== 'final' && latestKOPhase !== 'third_place'
     && !(latestKOPhase === 'semi_final' && koMatches.some(m => m.phase === 'final'))
     && !(latestKOPhase === 'quarter_final' && koMatches.some(m => m.phase === 'semi_final'))
 
   const showGenerateButton = canGenerateFirst || canGenerateNext
-  const generateButtonLabel = koMatches.length === 0
-    ? `🏆 Genereer finales (${KO_LABEL[FINALS_PHASE[tournament?.finals_type ?? ''] ?? 'final'] ?? 'Finale'})`
-    : latestKOPhase === 'quarter_final' ? '🏆 Genereer halve finales'
-    : latestKOPhase === 'semi_final'    ? '🏆 Genereer finale & 3e plaats'
-    : null
+  const generateButtonLabel = (() => {
+    if (canGenerateFirst) {
+      return isMultiPool
+        ? `🏆 Genereer finale poule (${tournament!.num_pools} poulewinnaars)`
+        : `🏆 Genereer finales (${KO_LABEL[FINALS_PHASE[tournament?.finals_type ?? ''] ?? 'final'] ?? 'Finale'})`
+    }
+    if (latestKOPhase === 'quarter_final') return '🏆 Genereer halve finales'
+    if (latestKOPhase === 'semi_final')    return '🏆 Genereer finale & 3e plaats'
+    return null
+  })()
 
   return (
     <div className="min-h-screen pb-8" style={{ backgroundColor: 'var(--bg-base)' }}>
