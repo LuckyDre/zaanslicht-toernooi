@@ -4,8 +4,8 @@ import Link from 'next/link'
 import { Match } from '@/lib/supabase'
 import { Badge } from '@/components/ui/Badge'
 
-const statusLabel = { scheduled: 'Gepland', live: 'LIVE', finished: 'Gespeeld' }
-const statusVariant = { scheduled: 'gray', live: 'green', finished: 'gray' } as const
+const statusLabel: Record<string, string> = { scheduled: 'Gepland', live: 'LIVE', finished: 'Gespeeld', cancelled: 'Afgelast' }
+const statusVariant: Record<string, 'gray' | 'green' | 'red' | 'yellow' | 'orange'> = { scheduled: 'gray', live: 'green', finished: 'gray', cancelled: 'red' }
 
 export function MatchCard({ match, tournamentId }: { match: Match; tournamentId: string }) {
   const isLive = match.status === 'live'

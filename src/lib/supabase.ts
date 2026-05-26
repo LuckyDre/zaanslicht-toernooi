@@ -49,7 +49,7 @@ export type Match = {
   scheduled_at: string | null
   started_at: string | null
   finished_at: string | null
-  status: 'scheduled' | 'live' | 'finished'
+  status: 'scheduled' | 'live' | 'finished' | 'cancelled'
   created_at: string
   home_team?: Team
   away_team?: Team
