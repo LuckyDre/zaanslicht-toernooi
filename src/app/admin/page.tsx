@@ -110,6 +110,11 @@ export default function AdminPage() {
                         Afsluiten
                       </Button>
                     )}
+                    {t.status === 'finished' && (
+                      <Button size="sm" variant="secondary" onClick={() => handleStatusChange(t.id, 'active')}>
+                        ↩ Heropenen
+                      </Button>
+                    )}
 
                     <Link href={`/admin/tournament/${t.id}/matches`}>
                       <Button size="sm" variant="secondary">Scores invoeren</Button>
