@@ -49,23 +49,42 @@ function sortStanding(a: Standing, b: Standing) {
   return b.goals_for - a.goals_for
 }
 
-/** Top N team IDs in seed order, pool-aware (interleaved: A1, B1, A2, B2 …) */
+/**
+ * Top N team IDs in seed order, using the "best runner-up" principle:
+ *
+ *   Round 1: all pool rank-1 teams (winners), sorted by overall performance
+ *   Round 2: all pool rank-2 teams, sorted by overall performance  ← best runner-up
+ *   Round 3: all pool rank-3 teams, etc.
+ *
+ * Example – 3 pools, semi-final (4 spots):
+ *   → A1, B1, C1 (all 3 winners) + best of A2/B2/C2 (1 best runner-up)
+ *   Never picks A2 just because it's pool A — it picks whoever has the best record.
+ */
 function getSeeds(standings: Standing[], numPools: number, count: number): string[] {
   if (numPools <= 1) {
     return [...standings].sort(sortStanding).slice(0, count).map(s => s.team_id)
   }
-  const perPool = Math.ceil(count / numPools)
+
+  // Sort each pool's standings by performance
   const byPool = Array.from({ length: numPools }, (_, p) =>
-    standings.filter(s => (s.pool ?? 1) === p + 1)
-      .sort(sortStanding).slice(0, perPool).map(s => s.team_id)
+    standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)
   )
-  const seeds: string[] = []
-  for (let rank = 0; rank < perPool; rank++) {
-    for (let pool = 0; pool < numPools; pool++) {
-      if (byPool[pool]?.[rank]) seeds.push(byPool[pool][rank])
+
+  // Take teams rank-by-rank; within the same rank pick the best performer first
+  const result: string[] = []
+  for (let rank = 0; result.length < count; rank++) {
+    const sameRank = byPool
+      .map(pool => pool[rank])
+      .filter((s): s is Standing => !!s)
+      .sort(sortStanding) // best runner-up comes first
+
+    if (sameRank.length === 0) break
+    for (const s of sameRank) {
+      if (result.length >= count) break
+      result.push(s.team_id)
     }
   }
-  return seeds.slice(0, count)
+  return result
 }
 
 /** Standard single-elimination bracket pairings from seed list */
@@ -403,6 +422,11 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     if (!tournament) return
     setGeneratingKO(true)
     try {
+      // Always fetch fresh standings so we use final group-phase results
+      const { data: freshStandings } = await supabase.from('standings').select('*').eq('tournament_id', id)
+      const currentStandings = freshStandings ?? standings
+      if (freshStandings) setStandings(freshStandings)
+
       const groupMs  = matches.filter(m => m.phase === 'group')
       const koMs     = matches.filter(m => m.phase !== 'group')
       const maxMatchNum  = matches.reduce((max, m) => Math.max(max, m.match_number ?? 0), 0)
@@ -416,7 +440,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       if (koMs.length === 0) {
         // ── First KO round: seed from group standings ──────────────────────
         const count = FINALS_COUNT[tournament.finals_type] ?? 2
-        const seeds = getSeeds(standings, tournament.num_pools, count)
+        const seeds = getSeeds(currentStandings, tournament.num_pools, count)
         if (seeds.length < 2) { alert('Niet genoeg teams in de standen om finales te genereren.'); setGeneratingKO(false); return }
         phase    = FINALS_PHASE[tournament.finals_type] ?? 'final'
         matchups = seedsToMatchups(seeds)
