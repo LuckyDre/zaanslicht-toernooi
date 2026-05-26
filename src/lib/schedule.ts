@@ -6,64 +6,87 @@ export type MatchSlot = {
   matchNumber: number
 }
 
+/** Build the circle-rotation round list for a single pool. */
+function buildPoolRounds(poolTeams: number[]): [number, number][][] {
+  const t = poolTeams.length % 2 === 0
+    ? [...poolTeams]
+    : [...poolTeams, -1] // -1 = bye
+  const n = t.length
+  const rounds: [number, number][][] = []
+  for (let r = 0; r < n - 1; r++) {
+    const roundMatches: [number, number][] = []
+    for (let i = 0; i < n / 2; i++) {
+      const home = t[i], away = t[n - 1 - i]
+      if (home !== -1 && away !== -1) roundMatches.push([home, away])
+    }
+    rounds.push(roundMatches)
+    // Rotate: keep t[0] fixed, rotate the rest
+    t.splice(1, 0, t.pop()!)
+  }
+  return rounds
+}
+
 /**
  * Core scheduler.
- * teamsByPool[p] = array of team-indices that belong to pool p.
- * Only generates intra-pool matches.
- * Matches from different pools are interleaved so they happen simultaneously.
- * Correctly splits into physical time-slots of ≤ numFields matches.
+ *
+ * Single pool  → fills all available fields per time-slot (original behaviour).
+ * Multi-pool   → each pool is assigned a dedicated field (pool p → field p % numFields).
+ *                Pools play simultaneously, each on their own field.
+ *                If more pools than fields, extra pools cycle back to field 0, 1, …
+ *                and are queued sequentially behind the first pool on that field.
  */
 export function generateSchedule(
   numFields: number,
   teamsByPool: number[][],
 ): MatchSlot[] {
-  // Build a list-of-rounds per pool using the circle/rotation algorithm
-  const poolRoundLists = teamsByPool.map(poolTeams => {
-    const t = poolTeams.length % 2 === 0
-      ? [...poolTeams]
-      : [...poolTeams, -1] // -1 = bye
-    const n = t.length
-    const rounds: [number, number][][] = []
-
-    for (let r = 0; r < n - 1; r++) {
-      const roundMatches: [number, number][] = []
-      for (let i = 0; i < n / 2; i++) {
-        const home = t[i], away = t[n - 1 - i]
-        if (home !== -1 && away !== -1) roundMatches.push([home, away])
-      }
-      rounds.push(roundMatches)
-      // Rotate: keep t[0] fixed, rotate the rest
-      t.splice(1, 0, t.pop()!)
-    }
-    return rounds
-  })
-
+  const numPools = teamsByPool.length
+  const poolRoundLists = teamsByPool.map(buildPoolRounds)
   const maxAlgoRounds = Math.max(...poolRoundLists.map(r => r.length), 0)
 
   const slots: MatchSlot[] = []
   let matchNumber = 1
   let globalRound = 1
 
+  // ── Single pool: fill all fields per time-slot ───────────────────────────
+  if (numPools === 1) {
+    for (let algoRound = 0; algoRound < maxAlgoRounds; algoRound++) {
+      const combined = poolRoundLists[0][algoRound]
+      for (let i = 0; i < combined.length; i += numFields) {
+        const chunk = combined.slice(i, i + numFields)
+        chunk.forEach(([home, away], fieldIdx) => {
+          slots.push({ homeTeamIndex: home, awayTeamIndex: away, round: globalRound, fieldIndex: fieldIdx, matchNumber: matchNumber++ })
+        })
+        globalRound++
+      }
+    }
+    return slots
+  }
+
+  // ── Multi-pool: dedicated field per pool (pool p → field p % numFields) ──
   for (let algoRound = 0; algoRound < maxAlgoRounds; algoRound++) {
-    // Combine all pools' matches for this algo-round
-    const combined: [number, number][] = []
-    poolRoundLists.forEach(poolRounds => {
-      if (algoRound < poolRounds.length) combined.push(...poolRounds[algoRound])
+    // Build a queue of matches per field for this algo-round.
+    // Pools sharing a field are concatenated (played sequentially on that field).
+    const fieldQueues = new Map<number, [number, number][]>()
+    poolRoundLists.forEach((poolRounds, p) => {
+      if (algoRound >= poolRounds.length) return
+      const f = p % numFields
+      if (!fieldQueues.has(f)) fieldQueues.set(f, [])
+      fieldQueues.get(f)!.push(...poolRounds[algoRound])
     })
 
-    // Split into physical time-slots of numFields
-    for (let i = 0; i < combined.length; i += numFields) {
-      const chunk = combined.slice(i, i + numFields)
-      chunk.forEach(([home, away], fieldIdx) => {
-        slots.push({
-          homeTeamIndex: home,
-          awayTeamIndex: away,
-          round: globalRound,
-          fieldIndex: fieldIdx,
-          matchNumber: matchNumber++,
-        })
+    // Number of time-slots = longest queue across all fields
+    const maxQueueLen = Math.max(...Array.from(fieldQueues.values()).map(q => q.length), 0)
+
+    for (let slot = 0; slot < maxQueueLen; slot++) {
+      let hasMatches = false
+      fieldQueues.forEach((queue, fieldIdx) => {
+        const match = queue[slot]
+        if (!match) return
+        const [home, away] = match
+        slots.push({ homeTeamIndex: home, awayTeamIndex: away, round: globalRound, fieldIndex: fieldIdx, matchNumber: matchNumber++ })
+        hasMatches = true
       })
-      globalRound++
+      if (hasMatches) globalRound++
     }
   }
 
