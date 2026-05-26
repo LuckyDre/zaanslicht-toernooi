@@ -189,14 +189,53 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
         </div>
 
         {/* Tab content */}
-        {tab === 'standings' && (
-          <StandingsTable
-            standings={standings}
-            tournamentId={id}
-            favoriteTeamIds={favorites}
-            onToggleFavorite={toggleFavorite}
-          />
-        )}
+        {tab === 'standings' && (() => {
+          const numPools = tournament.num_pools ?? 1
+          if (numPools <= 1) {
+            return (
+              <StandingsTable
+                standings={standings}
+                tournamentId={id}
+                favoriteTeamIds={favorites}
+                onToggleFavorite={toggleFavorite}
+              />
+            )
+          }
+          const POOL_COLORS = ['#FF6B00', '#3B82F6', '#22c55e', '#a855f7']
+          const POOL_LABELS = ['A', 'B', 'C', 'D']
+          return (
+            <div className="flex flex-col gap-6">
+              {Array.from({ length: numPools }, (_, p) => {
+                const color = POOL_COLORS[p] ?? '#FF6B00'
+                const label = POOL_LABELS[p] ?? String(p + 1)
+                const poolStandings = standings.filter(s => (s.pool ?? 1) === p + 1)
+                return (
+                  <div key={p}>
+                    <div
+                      className="flex items-center gap-2 px-3 py-2 rounded-t-xl font-bold text-sm"
+                      style={{ backgroundColor: `${color}20`, color }}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: color }}
+                      />
+                      Poule {label}
+                      <span className="font-normal text-xs ml-auto" style={{ color: 'var(--text-secondary)' }}>
+                        {poolStandings.length} teams
+                      </span>
+                    </div>
+                    <StandingsTable
+                      standings={poolStandings}
+                      tournamentId={id}
+                      favoriteTeamIds={favorites}
+                      onToggleFavorite={toggleFavorite}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {tab === 'matches' && (
           <div className="flex flex-col gap-3">

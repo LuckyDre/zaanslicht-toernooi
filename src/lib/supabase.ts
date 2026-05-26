@@ -15,6 +15,7 @@ export type Tournament = {
   num_halves: 1 | 2
   total_duration_minutes: number | null
   finals_type: 'none' | 'final' | 'semi_final' | 'quarter_final'
+  num_pools: number
   status: 'draft' | 'active' | 'finished'
   created_at: string
   updated_at: string
@@ -25,6 +26,7 @@ export type Team = {
   tournament_id: string
   name: string
   color: string
+  pool: number
   created_at: string
 }
 
@@ -67,5 +69,6 @@ export type Standing = {
   goals_for: number
   goals_against: number
   points: number
+  pool: number
   team?: Team
 }

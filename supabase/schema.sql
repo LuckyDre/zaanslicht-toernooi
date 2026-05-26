@@ -11,6 +11,7 @@ create table if not exists tournaments (
   num_halves int not null default 1 check (num_halves in (1,2)),
   total_duration_minutes int,
   finals_type text not null default 'none' check (finals_type in ('none','final','semi_final','quarter_final')),
+  num_pools int not null default 1,
   status text not null default 'draft' check (status in ('draft','active','finished')),
   created_at timestamptz default now(),
   updated_at timestamptz default now()
@@ -22,6 +23,7 @@ create table if not exists teams (
   tournament_id uuid references tournaments(id) on delete cascade not null,
   name text not null,
   color text not null default '#FF6B00',
+  pool int not null default 1,
   created_at timestamptz default now()
 );
 
@@ -64,6 +66,7 @@ create table if not exists standings (
   goals_for int not null default 0,
   goals_against int not null default 0,
   points int not null default 0,
+  pool int not null default 1,
   unique(tournament_id, team_id)
 );
 
