@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { supabase, Match, Tournament } from '@/lib/supabase'
+import { supabase, Match, Tournament, Standing, Field } from '@/lib/supabase'
 import { Navbar } from '@/components/ui/Navbar'
 import { Button } from '@/components/ui/Button'
 
@@ -17,8 +17,80 @@ function getRoundStatus(ms: Match[]): RS {
   return 'scheduled'
 }
 
+// ─── KO helpers ─────────────────────────────────────────────────────────────
+
+const KO_PILL: Partial<Record<Match['phase'], string>> = {
+  quarter_final: 'KF', semi_final: 'HF', final: 'F', third_place: '3e',
+}
+const KO_LABEL: Partial<Record<Match['phase'], string>> = {
+  quarter_final: 'Kwartfinales', semi_final: 'Halve finales',
+  final: 'Finale', third_place: 'Wedstrijd om 3e plaats',
+}
+const FINALS_COUNT: Record<string, number> = { final: 2, semi_final: 4, quarter_final: 8 }
+const FINALS_PHASE: Record<string, Match['phase']> = {
+  final: 'final', semi_final: 'semi_final', quarter_final: 'quarter_final',
+}
+const PHASE_ORDER: Partial<Record<Match['phase'], number>> = {
+  quarter_final: 1, semi_final: 2, third_place: 3, final: 4,
+}
+
+function getRoundPillLabel(ms: Match[]): string | undefined {
+  for (const m of ms) {
+    const lbl = KO_PILL[m.phase]
+    if (lbl) return lbl
+  }
+  return undefined
+}
+
+function sortStanding(a: Standing, b: Standing) {
+  if (b.points !== a.points) return b.points - a.points
+  const gdA = a.goals_for - a.goals_against, gdB = b.goals_for - b.goals_against
+  if (gdB !== gdA) return gdB - gdA
+  return b.goals_for - a.goals_for
+}
+
+/** Top N team IDs in seed order, pool-aware (interleaved: A1, B1, A2, B2 …) */
+function getSeeds(standings: Standing[], numPools: number, count: number): string[] {
+  if (numPools <= 1) {
+    return [...standings].sort(sortStanding).slice(0, count).map(s => s.team_id)
+  }
+  const perPool = Math.ceil(count / numPools)
+  const byPool = Array.from({ length: numPools }, (_, p) =>
+    standings.filter(s => (s.pool ?? 1) === p + 1)
+      .sort(sortStanding).slice(0, perPool).map(s => s.team_id)
+  )
+  const seeds: string[] = []
+  for (let rank = 0; rank < perPool; rank++) {
+    for (let pool = 0; pool < numPools; pool++) {
+      if (byPool[pool]?.[rank]) seeds.push(byPool[pool][rank])
+    }
+  }
+  return seeds.slice(0, count)
+}
+
+/** Standard single-elimination bracket pairings from seed list */
+function seedsToMatchups(seeds: string[]): [string, string][] {
+  const n = seeds.length
+  if (n === 2) return [[seeds[0], seeds[1]]]
+  if (n === 4) return [[seeds[0], seeds[3]], [seeds[1], seeds[2]]]
+  if (n === 8) return [[seeds[0], seeds[7]], [seeds[3], seeds[4]], [seeds[1], seeds[6]], [seeds[2], seeds[5]]]
+  // Generic: pair top vs bottom
+  const pairs: [string, string][] = []
+  for (let i = 0, j = n - 1; i < j; i++, j--) pairs.push([seeds[i], seeds[j]])
+  return pairs
+}
+
+function getWinner(m: Match): string {
+  return (m.home_score ?? 0) >= (m.away_score ?? 0) ? m.home_team_id : m.away_team_id
+}
+function getLoser(m: Match): string {
+  return (m.home_score ?? 0) < (m.away_score ?? 0) ? m.home_team_id : m.away_team_id
+}
+
 // ─── Round navigator pill ────────────────────────────────────────────────────
-function RoundPill({ n, status, selected, onClick }: { n: number; status: RS; selected: boolean; onClick: () => void }) {
+function RoundPill({ n, label, status, selected, onClick }: {
+  n: number; label?: string; status: RS; selected: boolean; onClick: () => void
+}) {
   const bg     = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e20' : status === 'live' ? '#FF6B0025' : 'var(--bg-card)'
   const border = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e60' : status === 'live' ? 'var(--orange)' : 'var(--border)'
   const txtCol = selected ? '#fff' : 'var(--text-primary)'
@@ -26,8 +98,9 @@ function RoundPill({ n, status, selected, onClick }: { n: number; status: RS; se
     <button onClick={onClick}
       className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl cursor-pointer active:scale-95 transition-transform"
       style={{ width: 48, height: 48, backgroundColor: bg, border: `2px solid ${border}`, color: txtCol }}>
-      <span className="font-bold text-sm leading-none">{n}</span>
-      <span className="text-[10px] leading-none mt-0.5" style={{ color: selected ? 'rgba(255,255,255,.8)' : status === 'finished' ? '#22c55e' : status === 'live' ? 'var(--orange)' : 'var(--border)' }}>
+      <span className="font-bold text-sm leading-none">{label ?? n}</span>
+      <span className="text-[10px] leading-none mt-0.5"
+        style={{ color: selected ? 'rgba(255,255,255,.8)' : status === 'finished' ? '#22c55e' : status === 'live' ? 'var(--orange)' : 'var(--border)' }}>
         {status === 'finished' ? '✓' : status === 'live' ? '●' : '·'}
       </span>
     </button>
@@ -36,8 +109,7 @@ function RoundPill({ n, status, selected, onClick }: { n: number; status: RS; se
 
 // ─── Match card ──────────────────────────────────────────────────────────────
 function MatchCard({
-  match, s,
-  onUpd, onSaveScore, onSave,
+  match, s, onUpd, onSaveScore, onSave,
 }: {
   match: Match; s: MS
   onUpd: (p: Partial<MS>) => void
@@ -57,8 +129,6 @@ function MatchCard({
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: `1.5px solid ${borderColor}`, backgroundColor: bgColor }}>
-
-      {/* Header: field + status */}
       <div className="flex items-center justify-between px-4 py-2.5"
         style={{ backgroundColor: headBg, borderBottom: `1px solid ${borderColor}` }}>
         <span className="font-bold text-sm">{match.field?.name ?? `Wedstrijd ${match.match_number}`}</span>
@@ -69,12 +139,9 @@ function MatchCard({
         </div>
       </div>
 
-      {/* Score section */}
       <div className="px-4 py-4">
         {isLive ? (
-          // Live: big centered score controls
           <div className="flex items-center gap-2">
-            {/* Home */}
             <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
@@ -91,7 +158,6 @@ function MatchCard({
               </div>
             </div>
             <div className="text-2xl font-bold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>:</div>
-            {/* Away */}
             <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-sm truncate">{match.away_team?.name ?? '—'}</span>
@@ -109,14 +175,12 @@ function MatchCard({
             </div>
           </div>
         ) : isDone ? (
-          // Finished: clean final score
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 flex-1 min-w-0">
               <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
               <span className="font-bold truncate">{match.home_team?.name ?? '—'}</span>
             </div>
-            <span className="text-3xl font-bold font-mono flex-shrink-0"
-              style={{ color: '#22c55e' }}>
+            <span className="text-3xl font-bold font-mono flex-shrink-0" style={{ color: '#22c55e' }}>
               {match.home_score ?? 0}–{match.away_score ?? 0}
             </span>
             <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
@@ -125,7 +189,6 @@ function MatchCard({
             </div>
           </div>
         ) : isCancelled ? (
-          // Cancelled
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 flex-1 min-w-0">
               <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
@@ -138,7 +201,6 @@ function MatchCard({
             </div>
           </div>
         ) : (
-          // Scheduled
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 flex-1 min-w-0">
               <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
@@ -153,7 +215,6 @@ function MatchCard({
         )}
       </div>
 
-      {/* Action buttons */}
       <div className="flex gap-2 px-4 pb-4">
         {isScheduled && (
           <Button size="sm" loading={s.saving} onClick={() => onSave('live')} className="flex-1">▶ Start dit veld</Button>
@@ -183,13 +244,16 @@ function MatchCard({
 export default function MatchesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
-  const [tournament, setTournament]     = useState<Tournament | null>(null)
-  const [matches, setMatches]           = useState<Match[]>([])
-  const [states, setStates]             = useState<Record<string, MS>>({})
-  const [loading, setLoading]           = useState(true)
+  const [tournament, setTournament]       = useState<Tournament | null>(null)
+  const [matches, setMatches]             = useState<Match[]>([])
+  const [standings, setStandings]         = useState<Standing[]>([])
+  const [fields, setFields]               = useState<Field[]>([])
+  const [states, setStates]               = useState<Record<string, MS>>({})
+  const [loading, setLoading]             = useState(true)
   const [selectedRound, setSelectedRound] = useState<number | null>(null)
-  const [roundSaving, setRoundSaving]   = useState(false)
+  const [roundSaving, setRoundSaving]     = useState(false)
   const [stopAllSaving, setStopAllSaving] = useState(false)
+  const [generatingKO, setGeneratingKO]   = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -197,6 +261,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
   useEffect(() => {
     supabase.from('tournaments').select('*').eq('id', id).single().then(({ data }) => setTournament(data))
+    supabase.from('standings').select('*').eq('tournament_id', id).then(({ data }) => setStandings(data ?? []))
+    supabase.from('fields').select('*').eq('tournament_id', id).order('display_order').then(({ data }) => setFields(data ?? []))
+
     supabase.from('matches')
       .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*), field:fields(*)')
       .eq('tournament_id', id).order('round').order('match_number')
@@ -206,8 +273,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
         const init: Record<string, MS> = {}
         list.forEach(m => { init[m.id] = { homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, saving: false, saved: false, error: null } })
         setStates(init)
-
-        // Auto-select: live round > first scheduled round > last round
         const map: Record<number, Match[]> = {}
         list.forEach(m => { const r = m.round ?? 0; if (!map[r]) map[r] = []; map[r].push(m) })
         const sorted = Object.keys(map).map(Number).sort((a, b) => a - b)
@@ -221,7 +286,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const upd = (matchId: string, p: Partial<MS>) =>
     setStates(prev => ({ ...prev, [matchId]: { ...prev[matchId], ...p } }))
 
-  // Auto-advance after finishing a round: jump to next non-finished round
   const tryAdvance = (updatedList: Match[], fromRound: number) => {
     const map: Record<number, Match[]> = {}
     updatedList.forEach(m => { const r = m.round ?? 0; if (!map[r]) map[r] = []; map[r].push(m) })
@@ -230,6 +294,20 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       const next = sorted.find(r => r > fromRound && getRoundStatus(map[r]) !== 'finished')
       if (next !== undefined) setTimeout(() => setSelectedRound(next), 400)
     }
+  }
+
+  const reloadMatches = async () => {
+    const { data } = await supabase.from('matches')
+      .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*), field:fields(*)')
+      .eq('tournament_id', id).order('round').order('match_number')
+    if (!data) return data
+    setMatches(data)
+    setStates(prev => {
+      const next = { ...prev }
+      data.forEach(m => { if (!next[m.id]) next[m.id] = { homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, saving: false, saved: false, error: null } })
+      return next
+    })
+    return data
   }
 
   const saveMatch = async (match: Match, status: Match['status']) => {
@@ -251,9 +329,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       setMatches(updated)
       upd(match.id, { saving: false, saved: true })
       setTimeout(() => upd(match.id, { saved: false }), 2500)
-      if ((status === 'finished' || status === 'cancelled') && match.round != null) {
-        tryAdvance(updated, match.round)
-      }
+      if ((status === 'finished' || status === 'cancelled') && match.round != null) tryAdvance(updated, match.round)
     }
   }
 
@@ -322,6 +398,111 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     setStopAllSaving(false)
   }
 
+  // ─── Generate knockout round ────────────────────────────────────────────────
+  const generateKO = async () => {
+    if (!tournament) return
+    setGeneratingKO(true)
+    try {
+      const groupMs  = matches.filter(m => m.phase === 'group')
+      const koMs     = matches.filter(m => m.phase !== 'group')
+      const maxMatchNum  = matches.reduce((max, m) => Math.max(max, m.match_number ?? 0), 0)
+      const maxGroupRound = groupMs.reduce((max, m) => Math.max(max, m.round ?? 0), 0)
+      const maxKORound    = koMs.reduce((max, m) => Math.max(max, m.round ?? 0), maxGroupRound)
+      const numFields = Math.max(fields.length, 1)
+
+      let matchups: [string, string][]
+      let phase: Match['phase']
+
+      if (koMs.length === 0) {
+        // ── First KO round: seed from group standings ──────────────────────
+        const count = FINALS_COUNT[tournament.finals_type] ?? 2
+        const seeds = getSeeds(standings, tournament.num_pools, count)
+        if (seeds.length < 2) { alert('Niet genoeg teams in de standen om finales te genereren.'); setGeneratingKO(false); return }
+        phase    = FINALS_PHASE[tournament.finals_type] ?? 'final'
+        matchups = seedsToMatchups(seeds)
+
+      } else {
+        // ── Next KO round: seed from winners (and losers for 3rd place) ────
+        // Determine the latest existing KO phase
+        const latestPhase = koMs.reduce<Match['phase']>((latest, m) =>
+          (PHASE_ORDER[m.phase] ?? 0) > (PHASE_ORDER[latest] ?? 0) ? m.phase : latest
+        , 'quarter_final')
+
+        const phaseMs = [...koMs.filter(m => m.phase === latestPhase)]
+          .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
+
+        if (latestPhase === 'semi_final') {
+          // Generate final + 3rd place in the same round
+          const newRound = maxKORound + 1
+          const insertRows = [
+            // 3rd place: losers of both semis
+            {
+              tournament_id: tournament.id,
+              home_team_id:  getLoser(phaseMs[0]),
+              away_team_id:  getLoser(phaseMs[1]),
+              round: newRound,
+              match_number: maxMatchNum + 1,
+              phase: 'third_place' as const,
+              status: 'scheduled' as const,
+              field_id: fields[numFields > 1 ? 1 : 0]?.id ?? null,
+            },
+            // Final: winners of both semis
+            {
+              tournament_id: tournament.id,
+              home_team_id:  getWinner(phaseMs[0]),
+              away_team_id:  getWinner(phaseMs[1]),
+              round: newRound,
+              match_number: maxMatchNum + 2,
+              phase: 'final' as const,
+              status: 'scheduled' as const,
+              field_id: fields[0]?.id ?? null,
+            },
+          ]
+          await supabase.from('matches').insert(insertRows)
+          const updated = await reloadMatches()
+          if (updated) setTimeout(() => setSelectedRound(newRound), 200)
+          setGeneratingKO(false)
+          return
+
+        } else if (latestPhase === 'quarter_final') {
+          phase    = 'semi_final'
+          matchups = seedsToMatchups(phaseMs.map(getWinner))
+        } else {
+          setGeneratingKO(false); return
+        }
+      }
+
+      // ── Build rows and insert ──────────────────────────────────────────────
+      const insertRows: object[] = []
+      let mn = maxMatchNum + 1
+      let roundNum = maxKORound + 1
+      for (let i = 0; i < matchups.length; i += numFields) {
+        const chunk = matchups.slice(i, i + numFields)
+        chunk.forEach(([home, away], fi) => {
+          insertRows.push({
+            tournament_id: tournament.id,
+            home_team_id: home, away_team_id: away,
+            round: roundNum, match_number: mn++,
+            phase, status: 'scheduled' as const,
+            field_id: fields[fi]?.id ?? null,
+          })
+        })
+        roundNum++
+      }
+      await supabase.from('matches').insert(insertRows)
+      const updated = await reloadMatches()
+      if (updated) {
+        const newRound = insertRows.length > 0 ? maxKORound + 1 : null
+        if (newRound) setTimeout(() => setSelectedRound(newRound), 200)
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Fout bij aanmaken finalewedstrijden. Probeer opnieuw.')
+    }
+    setGeneratingKO(false)
+  }
+
+  // ─── Derived state ──────────────────────────────────────────────────────────
   const rounds = useMemo(() => {
     const map: Record<number, Match[]> = {}
     matches.forEach(m => { const r = m.round ?? 0; if (!map[r]) map[r] = []; map[r].push(m) })
@@ -335,11 +516,36 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const doneCount    = matches.filter(m => m.status === 'finished').length
   const doneRounds   = rounds.filter(r => getRoundStatus(r.matches) === 'finished').length
   const progress     = rounds.length > 0 ? (doneRounds / rounds.length) * 100 : 0
+  const crStatus     = currentRound ? getRoundStatus(currentRound.matches) : null
+  const crScheduled  = currentRound?.matches.filter(m => m.status === 'scheduled') ?? []
+  const crLive       = currentRound?.matches.filter(m => m.status === 'live') ?? []
 
-  // Selected round derived
-  const crStatus    = currentRound ? getRoundStatus(currentRound.matches) : null
-  const crScheduled = currentRound?.matches.filter(m => m.status === 'scheduled') ?? []
-  const crLive      = currentRound?.matches.filter(m => m.status === 'live') ?? []
+  // KO generation availability
+  const groupMatches  = matches.filter(m => m.phase === 'group')
+  const koMatches     = matches.filter(m => m.phase !== 'group')
+  const allGroupDone  = groupMatches.length > 0 && groupMatches.every(m => m.status === 'finished' || m.status === 'cancelled')
+
+  const latestKOPhase = koMatches.length > 0
+    ? koMatches.reduce<Match['phase']>((latest, m) =>
+        (PHASE_ORDER[m.phase] ?? 0) > (PHASE_ORDER[latest] ?? 0) ? m.phase : latest
+      , 'quarter_final')
+    : null
+
+  const allLatestKODone = !!latestKOPhase &&
+    koMatches.filter(m => m.phase === latestKOPhase).every(m => m.status === 'finished' || m.status === 'cancelled')
+
+  const canGenerateFirst = !!tournament && tournament.finals_type !== 'none' && allGroupDone && koMatches.length === 0
+  const canGenerateNext  = !!latestKOPhase && allLatestKODone
+    && latestKOPhase !== 'final' && latestKOPhase !== 'third_place'
+    && !(latestKOPhase === 'semi_final' && koMatches.some(m => m.phase === 'final'))
+    && !(latestKOPhase === 'quarter_final' && koMatches.some(m => m.phase === 'semi_final'))
+
+  const showGenerateButton = canGenerateFirst || canGenerateNext
+  const generateButtonLabel = koMatches.length === 0
+    ? `🏆 Genereer finales (${KO_LABEL[FINALS_PHASE[tournament?.finals_type ?? ''] ?? 'final'] ?? 'Finale'})`
+    : latestKOPhase === 'quarter_final' ? '🏆 Genereer halve finales'
+    : latestKOPhase === 'semi_final'    ? '🏆 Genereer finale & 3e plaats'
+    : null
 
   return (
     <div className="min-h-screen pb-8" style={{ backgroundColor: 'var(--bg-base)' }}>
@@ -382,9 +588,22 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                 style={{ width: `${progress}%`, backgroundColor: progress === 100 ? '#22c55e' : 'var(--orange)' }} />
             </div>
             {liveCount > 0 && (
-              <p className="text-xs mt-2 font-semibold" style={{ color: 'var(--orange)' }}>● {liveCount} wedstrijd{liveCount > 1 ? 'en' : ''} live</p>
+              <p className="text-xs mt-2 font-semibold" style={{ color: 'var(--orange)' }}>
+                ● {liveCount} wedstrijd{liveCount > 1 ? 'en' : ''} live
+              </p>
             )}
           </div>
+
+          {/* ── Generate KO banner ── */}
+          {showGenerateButton && generateButtonLabel && (
+            <button
+              onClick={generateKO}
+              disabled={generatingKO}
+              className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform mb-5"
+              style={{ padding: '16px 20px', backgroundColor: '#f59e0b', color: '#fff', fontSize: '16px', border: '2px solid #d97706' }}>
+              {generatingKO ? 'Aanmaken…' : generateButtonLabel}
+            </button>
+          )}
 
           {/* ── Round navigator ── */}
           <div className="mb-1">
@@ -393,8 +612,11 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           <div className="overflow-x-auto -mx-4 px-4 pb-1 mb-5">
             <div className="flex gap-2" style={{ width: 'max-content' }}>
               {rounds.map(({ round, matches: rm }) => (
-                <RoundPill key={round} n={round} status={getRoundStatus(rm)}
-                  selected={round === selectedRound} onClick={() => setSelectedRound(round)} />
+                <RoundPill key={round} n={round}
+                  label={getRoundPillLabel(rm)}
+                  status={getRoundStatus(rm)}
+                  selected={round === selectedRound}
+                  onClick={() => setSelectedRound(round)} />
               ))}
             </div>
           </div>
@@ -405,10 +627,14 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-2xl font-bold">
-                  Ronde {currentRound.round}
-                  <span className="text-base font-normal ml-1" style={{ color: 'var(--text-secondary)' }}>
-                    / {rounds.length}
-                  </span>
+                  {getRoundPillLabel(currentRound.matches)
+                    ? KO_LABEL[currentRound.matches[0]?.phase] ?? `Ronde ${currentRound.round}`
+                    : `Ronde ${currentRound.round}`}
+                  {!getRoundPillLabel(currentRound.matches) && (
+                    <span className="text-base font-normal ml-1" style={{ color: 'var(--text-secondary)' }}>
+                      / {rounds.filter(r => !getRoundPillLabel(r.matches)).length}
+                    </span>
+                  )}
                 </h2>
                 <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                   {crStatus === 'live'
@@ -452,23 +678,23 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
               <button onClick={() => startRound(currentRound.matches)} disabled={roundSaving}
                 className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
                 style={{ padding: '18px 24px', backgroundColor: 'var(--orange)', color: '#fff', fontSize: '17px' }}>
-                {roundSaving
-                  ? 'Starten…'
-                  : `▶  Start ronde ${currentRound.round}${crScheduled.length < currentRound.matches.length ? `  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}` : `  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}`}`}
+                {roundSaving ? 'Starten…' : `▶  Start${getRoundPillLabel(currentRound.matches) ? ` ${KO_LABEL[currentRound.matches[0]?.phase] ?? 'ronde'}` : ` ronde ${currentRound.round}`}  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}`}
               </button>
             )}
             {crLive.length > 0 && (
               <button onClick={() => stopRound(currentRound.round, currentRound.matches)} disabled={roundSaving}
                 className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform mt-2"
                 style={{ padding: '18px 24px', backgroundColor: '#ef4444', color: '#fff', fontSize: '17px' }}>
-                {roundSaving ? 'Stoppen…' : `■  Sluit ronde ${currentRound.round} af  ·  ${crLive.length} live`}
+                {roundSaving ? 'Stoppen…' : `■  Sluit af  ·  ${crLive.length} live`}
               </button>
             )}
             {crStatus === 'finished' && (
               <p className="text-center text-sm mt-3" style={{ color: 'var(--text-secondary)' }}>
-                {selectedRound !== rounds[rounds.length - 1]?.round
+                {showGenerateButton
+                  ? '👆 Druk op de gele knop hierboven om de volgende ronde aan te maken'
+                  : selectedRound !== rounds[rounds.length - 1]?.round
                   ? 'Ronde klaar — selecteer de volgende ronde hierboven ↑'
-                  : '🏆 Alle rondes gespeeld!'}
+                  : '🏆 Toernooi afgerond!'}
               </p>
             )}
           </>}
