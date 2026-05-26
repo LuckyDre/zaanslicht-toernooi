@@ -23,19 +23,44 @@ function ScoreInput({ value, onChange }: { value: number; onChange: (v: number) 
   )
 }
 
+// Drie snelknoppen: Gestart / Gaande / Klaar
+function QuickButtons({ match, saving, onStart, onSave, onFinish }: {
+  match: Match
+  saving: boolean
+  onStart: () => void
+  onSave: () => void
+  onFinish: () => void
+}) {
+  const status = match.status
+  const btn = (label: string, active: boolean, onClick: () => void, color: string) => (
+    <button
+      onClick={onClick}
+      disabled={saving}
+      className="flex-1 py-2 rounded-lg text-xs font-bold cursor-pointer transition-all disabled:opacity-50"
+      style={{
+        backgroundColor: active ? color : 'var(--bg-elevated)',
+        color: active ? '#fff' : 'var(--text-secondary)',
+        border: `1px solid ${active ? color : 'var(--border)'}`,
+      }}
+    >{label}</button>
+  )
+
+  return (
+    <div className="flex gap-1.5">
+      {btn('▶ Gestart', status === 'live', status === 'scheduled' ? onStart : () => {}, '#3b82f6')}
+      {btn('💾 Gaande', false, status === 'live' ? onSave : () => {}, '#f59e0b')}
+      {btn('✓ Klaar', status === 'finished', status !== 'finished' && status !== 'cancelled' ? onFinish : () => {}, '#22c55e')}
+    </div>
+  )
+}
+
 type MatchState = { homeScore: number; awayScore: number; saving: boolean; saved: boolean; error: string | null }
 
 const STATUS_BG: Record<string, string> = {
-  live:      '#FF6B0018',
-  finished:  '#22c55e18',
-  cancelled: '#ef444418',
-  scheduled: 'transparent',
+  live: '#FF6B0018', finished: '#22c55e18', cancelled: '#ef444418', scheduled: 'transparent',
 }
 const STATUS_BORDER: Record<string, string> = {
-  live:      'var(--orange)',
-  finished:  '#22c55e55',
-  cancelled: '#ef444455',
-  scheduled: 'var(--border)',
+  live: 'var(--orange)', finished: '#22c55e66', cancelled: '#ef444466', scheduled: 'var(--border)',
 }
 
 export default function MatchesPage({ params }: { params: Promise<{ id: string }> }) {
@@ -48,6 +73,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [activeFilter, setActiveFilter] = useState<'all' | 'scheduled' | 'live' | 'finished' | 'cancelled'>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkSaving, setBulkSaving] = useState(false)
+  const [stopAllSaving, setStopAllSaving] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -56,8 +82,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   }, [router])
 
   useEffect(() => {
-    supabase.from('tournaments').select('*').eq('id', id).single()
-      .then(({ data }) => setTournament(data))
+    supabase.from('tournaments').select('*').eq('id', id).single().then(({ data }) => setTournament(data))
     supabase.from('matches')
       .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*), field:fields(*)')
       .eq('tournament_id', id).order('round').order('match_number')
@@ -78,13 +103,13 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     setSelected(prev => { const n = new Set(prev); n.has(matchId) ? n.delete(matchId) : n.add(matchId); return n })
   }
 
-  const handleSave = async (match: Match, status: 'live' | 'finished' | 'cancelled') => {
+  const saveMatch = async (match: Match, status: 'live' | 'finished' | 'cancelled' | 'scheduled', scores = true) => {
     const s = states[match.id]
     if (!s) return
     updateState(match.id, { saving: true, error: null, saved: false })
     const { error } = await supabase.from('matches').update({
-      home_score: status === 'cancelled' ? null : s.homeScore,
-      away_score: status === 'cancelled' ? null : s.awayScore,
+      ...(scores && status !== 'cancelled' ? { home_score: s.homeScore, away_score: s.awayScore } : {}),
+      ...(status === 'cancelled' ? { home_score: null, away_score: null } : {}),
       status,
       started_at: status === 'live' && !match.started_at ? new Date().toISOString() : match.started_at,
       finished_at: status === 'finished' ? new Date().toISOString() : null,
@@ -92,7 +117,11 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     if (error) {
       updateState(match.id, { saving: false, error: `Fout: ${error.message}` })
     } else {
-      setMatches(prev => prev.map(m => m.id === match.id ? { ...m, status } : m))
+      setMatches(prev => prev.map(m => m.id === match.id
+        ? { ...m, status,
+            home_score: status === 'cancelled' ? null : s.homeScore,
+            away_score: status === 'cancelled' ? null : s.awayScore }
+        : m))
       updateState(match.id, { saving: false, saved: true })
       setTimeout(() => updateState(match.id, { saved: false }), 2000)
     }
@@ -112,6 +141,31 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  // Stop ALLE live wedstrijden in één keer
+  const handleStopAll = async () => {
+    const live = matches.filter(m => m.status === 'live')
+    if (!live.length) return
+    if (!confirm(`Alle ${live.length} live wedstrijden stoppen?`)) return
+    setStopAllSaving(true)
+    const now = new Date().toISOString()
+    await Promise.all(live.map(m => {
+      const s = states[m.id]
+      return supabase.from('matches').update({
+        status: 'finished', finished_at: now,
+        home_score: s?.homeScore ?? m.home_score ?? 0,
+        away_score: s?.awayScore ?? m.away_score ?? 0,
+      }).eq('id', m.id)
+    }))
+    setMatches(prev => prev.map(m => {
+      if (m.status !== 'live') return m
+      const s = states[m.id]
+      return { ...m, status: 'finished', finished_at: now,
+        home_score: s?.homeScore ?? m.home_score ?? 0,
+        away_score: s?.awayScore ?? m.away_score ?? 0 }
+    }))
+    setStopAllSaving(false)
+  }
+
   const handleBulkStart = async () => {
     const toStart = matches.filter(m => selected.has(m.id) && m.status === 'scheduled')
     if (!toStart.length) return
@@ -122,11 +176,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     ))
     setMatches(prev => prev.map(m => selected.has(m.id) && m.status === 'scheduled'
       ? { ...m, status: 'live', started_at: now, home_score: 0, away_score: 0 } : m))
-    setStates(prev => {
-      const next = { ...prev }
-      toStart.forEach(m => { next[m.id] = { ...next[m.id], homeScore: 0, awayScore: 0 } })
-      return next
-    })
+    setStates(prev => { const n = { ...prev }; toStart.forEach(m => { n[m.id] = { ...n[m.id], homeScore: 0, awayScore: 0 } }); return n })
     setSelected(new Set())
     setBulkSaving(false)
   }
@@ -155,25 +205,17 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     setBulkSaving(false)
   }
 
-  const filtered = matches.filter(m => activeFilter === 'all' || m.status === activeFilter)
-  const liveCount      = matches.filter(m => m.status === 'live').length
-  const scheduledCount = matches.filter(m => m.status === 'scheduled').length
-  const finishedCount  = matches.filter(m => m.status === 'finished').length
-  const cancelledCount = matches.filter(m => m.status === 'cancelled').length
+  const filtered   = matches.filter(m => activeFilter === 'all' || m.status === activeFilter)
+  const liveCount  = matches.filter(m => m.status === 'live').length
+  const schedCount = matches.filter(m => m.status === 'scheduled').length
+  const doneCount  = matches.filter(m => m.status === 'finished').length
+  const cancelCount= matches.filter(m => m.status === 'cancelled').length
 
-  const selectedScheduled = matches.filter(m => selected.has(m.id) && m.status === 'scheduled').length
-  const selectedLive      = matches.filter(m => selected.has(m.id) && m.status === 'live').length
+  const selScheduled = matches.filter(m => selected.has(m.id) && m.status === 'scheduled').length
+  const selLive      = matches.filter(m => selected.has(m.id) && m.status === 'live').length
 
   const selectableInView = filtered.filter(m => m.status !== 'finished' && m.status !== 'cancelled')
   const allSelected = selectableInView.length > 0 && selectableInView.every(m => selected.has(m.id))
-
-  const selectAll = () => {
-    if (allSelected) { setSelected(new Set()); return }
-    setSelected(new Set(selectableInView.map(m => m.id)))
-  }
-
-  const statusLabel: Record<string, string> = { scheduled: 'Gepland', live: '● LIVE', finished: 'Gespeeld', cancelled: 'Afgelast' }
-  const statusBadge: Record<string, 'green' | 'gray' | 'red' | 'yellow'> = { live: 'green', finished: 'gray', cancelled: 'red', scheduled: 'yellow' }
 
   return (
     <div className="min-h-screen pb-36" style={{ backgroundColor: 'var(--bg-base)' }}>
@@ -183,17 +225,24 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           ← Admin dashboard
         </Link>
 
-        <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
           <div>
             <h1 className="text-xl font-bold">{tournament?.name ?? '...'}</h1>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              {matches.length} wedstrijden · {finishedCount} gespeeld · {liveCount} live · {scheduledCount} gepland
-              {cancelledCount > 0 ? ` · ${cancelledCount} afgelast` : ''}
+              {matches.length} wedstrijden · {doneCount} klaar · {liveCount} live · {schedCount} gepland
+              {cancelCount > 0 ? ` · ${cancelCount} afgelast` : ''}
             </p>
           </div>
-          <Link href={`/tournament/${id}`} target="_blank">
-            <Button size="sm" variant="ghost">Live view ↗</Button>
-          </Link>
+          <div className="flex gap-2">
+            {liveCount > 0 && (
+              <Button size="sm" variant="danger" loading={stopAllSaving} onClick={handleStopAll}>
+                ■ Stop alle ({liveCount})
+              </Button>
+            )}
+            <Link href={`/tournament/${id}`} target="_blank">
+              <Button size="sm" variant="ghost">Live view ↗</Button>
+            </Link>
+          </div>
         </div>
 
         {/* Filter tabs */}
@@ -201,11 +250,12 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           {[
             { key: 'all',       label: `Alle (${matches.length})` },
             { key: 'live',      label: `Live (${liveCount})` },
-            { key: 'scheduled', label: `Gepland (${scheduledCount})` },
-            { key: 'finished',  label: `Klaar (${finishedCount})` },
-            ...(cancelledCount > 0 ? [{ key: 'cancelled', label: `Afgelast (${cancelledCount})` }] : []),
+            { key: 'scheduled', label: `Gepland (${schedCount})` },
+            { key: 'finished',  label: `Klaar (${doneCount})` },
+            ...(cancelCount > 0 ? [{ key: 'cancelled', label: `Afgelast (${cancelCount})` }] : []),
           ].map(f => (
-            <button key={f.key} onClick={() => { setActiveFilter(f.key as typeof activeFilter); setSelected(new Set()) }}
+            <button key={f.key}
+              onClick={() => { setActiveFilter(f.key as typeof activeFilter); setSelected(new Set()) }}
               className="flex-1 py-1.5 px-1 rounded-lg text-xs font-medium cursor-pointer transition-all"
               style={{ backgroundColor: activeFilter === f.key ? 'var(--orange)' : 'transparent', color: activeFilter === f.key ? '#fff' : 'var(--text-secondary)' }}>
               {f.label}
@@ -216,7 +266,8 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
         {/* Selecteer alles */}
         {!loading && selectableInView.length > 0 && (
           <div className="flex items-center justify-between mb-4 px-1">
-            <button onClick={selectAll} className="flex items-center gap-2 text-sm cursor-pointer hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>
+            <button onClick={() => { if (allSelected) setSelected(new Set()); else setSelected(new Set(selectableInView.map(m => m.id))) }}
+              className="flex items-center gap-2 text-sm cursor-pointer hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>
               <div className="w-5 h-5 rounded border-2 flex items-center justify-center"
                 style={{ borderColor: allSelected ? 'var(--orange)' : 'var(--border)', backgroundColor: allSelected ? 'var(--orange)' : 'transparent' }}>
                 {allSelected && <span className="text-white text-xs font-bold">✓</span>}
@@ -224,9 +275,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
               Selecteer alles
             </button>
             {selected.size > 0 && (
-              <span className="text-sm font-medium" style={{ color: 'var(--orange)' }}>
-                {selected.size} geselecteerd
-              </span>
+              <span className="text-sm font-medium" style={{ color: 'var(--orange)' }}>{selected.size} geselecteerd</span>
             )}
           </div>
         )}
@@ -256,10 +305,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     </button>
                   )}
 
-                  <Card style={{
-                    border: `1px solid ${isSelected ? 'var(--orange)' : STATUS_BORDER[match.status]}`,
-                    backgroundColor: STATUS_BG[match.status],
-                  }}>
+                  <Card style={{ border: `1px solid ${isSelected ? 'var(--orange)' : STATUS_BORDER[match.status]}`, backgroundColor: STATUS_BG[match.status] }}>
                     {/* Header */}
                     <div className="flex items-center justify-between mb-3 pr-8">
                       <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
@@ -268,7 +314,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                       </span>
                       <div className="flex items-center gap-2">
                         {s.saved && <span className="text-xs" style={{ color: 'var(--green)' }}>✓ Opgeslagen</span>}
-                        <Badge variant={statusBadge[match.status]}>{statusLabel[match.status]}</Badge>
+                        <Badge variant={isLive ? 'green' : isDone ? 'gray' : isCancelled ? 'red' : 'yellow'}>
+                          {isLive ? '● LIVE' : isDone ? 'Gespeeld' : isCancelled ? 'Afgelast' : 'Gepland'}
+                        </Badge>
                       </div>
                     </div>
 
@@ -282,7 +330,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                         {!isCancelled && <ScoreInput value={s.homeScore} onChange={v => updateState(match.id, { homeScore: v, saved: false })} />}
                       </div>
                       <div className="text-xl font-bold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
-                        {isDone ? `${match.home_score ?? 0} - ${match.away_score ?? 0}` : isCancelled ? '–' : 'vs'}
+                        {isDone ? `${match.home_score ?? 0}–${match.away_score ?? 0}` : isCancelled ? '–' : 'vs'}
                       </div>
                       <div className="flex-1 min-w-0 flex flex-col items-end">
                         <div className="flex items-center gap-2 mb-3 justify-end">
@@ -299,36 +347,36 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                       </div>
                     )}
 
-                    {/* Knoppen */}
-                    <div className="flex gap-2 pt-3 flex-wrap" style={{ borderTop: '1px solid var(--border)' }}>
-                      {!isDone && !isLive && !isCancelled && (
-                        <Button size="sm" variant="secondary" loading={s.saving} onClick={() => handleSave(match, 'live')} className="flex-1">
-                          ▶ Start
-                        </Button>
-                      )}
-                      {isLive && (
-                        <Button size="sm" variant="secondary" loading={s.saving} onClick={() => handleScoreUpdate(match)} className="flex-1">
-                          💾 Score opslaan
-                        </Button>
-                      )}
-                      {!isDone && !isCancelled && (
-                        <Button size="sm" loading={s.saving} onClick={() => handleSave(match, 'finished')} className="flex-1">
-                          ✓ Afsluiten
-                        </Button>
-                      )}
+                    {/* Drie snelknoppen */}
+                    {!isCancelled && (
+                      <div className="mb-3">
+                        <QuickButtons
+                          match={match}
+                          saving={s.saving}
+                          onStart={() => saveMatch(match, 'live')}
+                          onSave={() => handleScoreUpdate(match)}
+                          onFinish={() => saveMatch(match, 'finished')}
+                        />
+                      </div>
+                    )}
+
+                    {/* Extra knoppen */}
+                    <div className="flex gap-2 flex-wrap pt-2" style={{ borderTop: '1px solid var(--border)' }}>
                       {!isDone && !isCancelled && (
                         <Button size="sm" variant="danger" loading={s.saving}
-                          onClick={() => { if (confirm('Wedstrijd aflasten?')) handleSave(match, 'cancelled') }}>
+                          onClick={() => { if (confirm('Wedstrijd aflasten?')) saveMatch(match, 'cancelled', false) }}>
                           Aflasten
                         </Button>
                       )}
                       {(isDone || isCancelled) && (
-                        <Button size="sm" variant="secondary" loading={s.saving} onClick={() => handleSave(match, 'scheduled')} className="flex-1">
+                        <Button size="sm" variant="secondary" loading={s.saving}
+                          onClick={() => saveMatch(match, 'scheduled', false)} className="flex-1">
                           ↩ Herplannen
                         </Button>
                       )}
                       {isDone && (
-                        <Button size="sm" variant="secondary" loading={s.saving} onClick={() => handleSave(match, 'finished')} className="flex-1">
+                        <Button size="sm" variant="secondary" loading={s.saving}
+                          onClick={() => saveMatch(match, 'finished')} className="flex-1">
                           ✏️ Score aanpassen
                         </Button>
                       )}
@@ -353,24 +401,20 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           style={{ backgroundColor: 'var(--bg-card)', borderTop: '2px solid var(--orange)', boxShadow: '0 -4px 20px rgba(0,0,0,0.5)' }}>
           <div className="max-w-2xl mx-auto w-full">
             <p className="text-sm font-semibold mb-3 text-center" style={{ color: 'var(--text-secondary)' }}>
-              {selected.size} wedstrijd{selected.size !== 1 ? 'en' : ''} geselecteerd
-              {selectedScheduled > 0 && ` · ${selectedScheduled} gepland`}
-              {selectedLive > 0 && ` · ${selectedLive} live`}
+              {selected.size} geselecteerd · {selScheduled > 0 ? `${selScheduled} gepland` : ''}{selScheduled > 0 && selLive > 0 ? ' · ' : ''}{selLive > 0 ? `${selLive} live` : ''}
             </p>
             <div className="flex gap-2">
-              {selectedScheduled > 0 && (
+              {selScheduled > 0 && (
                 <Button loading={bulkSaving} onClick={handleBulkStart} className="flex-1">
-                  ▶ Start {selectedScheduled}
+                  ▶ Start {selScheduled}
                 </Button>
               )}
-              {selectedLive > 0 && (
+              {selLive > 0 && (
                 <Button loading={bulkSaving} onClick={handleBulkFinish} variant="secondary" className="flex-1">
-                  ✓ Sluit {selectedLive} af
+                  ✓ Sluit {selLive} af
                 </Button>
               )}
-              <Button variant="ghost" onClick={() => setSelected(new Set())}>
-                ✕
-              </Button>
+              <Button variant="ghost" onClick={() => setSelected(new Set())}>✕</Button>
             </div>
           </div>
         </div>

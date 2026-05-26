@@ -17,6 +17,8 @@ export default function AdminPage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [statusChanging, setStatusChanging] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -37,14 +39,22 @@ export default function AdminPage() {
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Toernooi "${name}" verwijderen? Dit kan niet ongedaan worden.`)) return
     setDeleting(id)
-    await supabase.from('tournaments').delete().eq('id', id)
+    const { error } = await supabase.from('tournaments').delete().eq('id', id)
+    if (error) { setError(`Verwijderen mislukt: ${error.message}`); setDeleting(null); return }
     setTournaments(prev => prev.filter(t => t.id !== id))
     setDeleting(null)
   }
 
   const handleStatusChange = async (id: string, status: Tournament['status']) => {
-    await supabase.from('tournaments').update({ status }).eq('id', id)
-    setTournaments(prev => prev.map(t => t.id === id ? { ...t, status } : t))
+    setStatusChanging(id)
+    setError(null)
+    const { error } = await supabase.from('tournaments').update({ status }).eq('id', id)
+    if (error) {
+      setError(`Status wijzigen mislukt: ${error.message}`)
+    } else {
+      setTournaments(prev => prev.map(t => t.id === id ? { ...t, status } : t))
+    }
+    setStatusChanging(null)
   }
 
   return (
@@ -55,9 +65,7 @@ export default function AdminPage() {
         <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-            <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-              Beheer je toernooien
-            </p>
+            <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>Beheer je toernooien</p>
           </div>
           <div className="flex gap-2">
             <Link href="/admin/tournament/new">
@@ -67,6 +75,13 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {error && (
+          <div className="mb-4 p-3 rounded-xl text-sm" style={{ backgroundColor: '#ef444422', color: 'var(--red)', border: '1px solid #ef444455' }}>
+            ⚠️ {error}
+            <button onClick={() => setError(null)} className="ml-2 underline cursor-pointer">Sluiten</button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-12">
             <div className="w-8 h-8 rounded-full border-2 animate-spin"
@@ -75,12 +90,8 @@ export default function AdminPage() {
         ) : tournaments.length === 0 ? (
           <Card className="text-center py-12">
             <p className="text-lg mb-2">Nog geen toernooien</p>
-            <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
-              Maak je eerste toernooi aan
-            </p>
-            <Link href="/admin/tournament/new">
-              <Button>+ Nieuw toernooi</Button>
-            </Link>
+            <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>Maak je eerste toernooi aan</p>
+            <Link href="/admin/tournament/new"><Button>+ Nieuw toernooi</Button></Link>
           </Card>
         ) : (
           <div className="flex flex-col gap-4">
@@ -99,19 +110,24 @@ export default function AdminPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    {/* Status buttons */}
                     {t.status === 'draft' && (
-                      <Button size="sm" variant="secondary" onClick={() => handleStatusChange(t.id, 'active')}>
-                        Activeren
+                      <Button size="sm" variant="secondary"
+                        loading={statusChanging === t.id}
+                        onClick={() => handleStatusChange(t.id, 'active')}>
+                        ▶ Activeren
                       </Button>
                     )}
                     {t.status === 'active' && (
-                      <Button size="sm" variant="secondary" onClick={() => handleStatusChange(t.id, 'finished')}>
-                        Afsluiten
+                      <Button size="sm" variant="secondary"
+                        loading={statusChanging === t.id}
+                        onClick={() => handleStatusChange(t.id, 'finished')}>
+                        ■ Afsluiten
                       </Button>
                     )}
                     {t.status === 'finished' && (
-                      <Button size="sm" variant="secondary" onClick={() => handleStatusChange(t.id, 'active')}>
+                      <Button size="sm"
+                        loading={statusChanging === t.id}
+                        onClick={() => handleStatusChange(t.id, 'active')}>
                         ↩ Heropenen
                       </Button>
                     )}
@@ -122,12 +138,9 @@ export default function AdminPage() {
                     <Link href={`/tournament/${t.id}`} target="_blank">
                       <Button size="sm" variant="ghost">Bekijk ↗</Button>
                     </Link>
-                    <Button
-                      size="sm"
-                      variant="danger"
+                    <Button size="sm" variant="danger"
                       loading={deleting === t.id}
-                      onClick={() => handleDelete(t.id, t.name)}
-                    >
+                      onClick={() => handleDelete(t.id, t.name)}>
                       Verwijder
                     </Button>
                   </div>
