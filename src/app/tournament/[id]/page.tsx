@@ -202,12 +202,12 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
             )
           }
           const POOL_COLORS = ['#FF6B00', '#3B82F6', '#22c55e', '#a855f7']
-          const POOL_LABELS = ['A', 'B', 'C', 'D']
+          const POOL_LABELS_FB = ['A', 'B', 'C', 'D']
           return (
             <div className="flex flex-col gap-6">
               {Array.from({ length: numPools }, (_, p) => {
                 const color = POOL_COLORS[p] ?? '#FF6B00'
-                const label = POOL_LABELS[p] ?? String(p + 1)
+                const label = tournament.pool_names?.[p] ?? `Poule ${POOL_LABELS_FB[p] ?? p + 1}`
                 const poolStandings = standings.filter(s => (s.pool ?? 1) === p + 1)
                 return (
                   <div key={p}>
@@ -215,11 +215,8 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
                       className="flex items-center gap-2 px-3 py-2 rounded-t-xl font-bold text-sm"
                       style={{ backgroundColor: `${color}20`, color }}
                     >
-                      <span
-                        className="w-2.5 h-2.5 rounded-full"
-                        style={{ backgroundColor: color }}
-                      />
-                      Poule {label}
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                      {label}
                       <span className="font-normal text-xs ml-auto" style={{ color: 'var(--text-secondary)' }}>
                         {poolStandings.length} teams
                       </span>
@@ -237,28 +234,123 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
           )
         })()}
 
-        {tab === 'matches' && (
-          <div className="flex flex-col gap-3">
-            {liveMatches.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
-            {finishedMatches.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
-            {finishedMatches.length === 0 && liveMatches.length === 0 && (
-              <Card className="text-center py-8">
-                <p style={{ color: 'var(--text-secondary)' }}>Nog geen gespeelde wedstrijden</p>
-              </Card>
-            )}
-          </div>
-        )}
+        {(tab === 'matches' || tab === 'schedule') && (() => {
+          const pool_colors = ['#FF6B00', '#3B82F6', '#22c55e', '#a855f7']
+          const pool_labels_fb = ['A', 'B', 'C', 'D']
+          const numPools = tournament.num_pools ?? 1
+          const poolLabel = (p: number) =>
+            tournament.pool_names?.[p] ?? `Poule ${pool_labels_fb[p] ?? p + 1}`
 
-        {tab === 'schedule' && (
-          <div className="flex flex-col gap-3">
-            {scheduledMatches.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
-            {scheduledMatches.length === 0 && (
+          const PHASE_LABELS: Record<string, string> = {
+            quarter_final: 'Kwartfinales',
+            semi_final: 'Halve finales',
+            third_place: 'Wedstrijd om 3e plaats',
+            final: 'Finale',
+          }
+          const KNOCKOUT_PHASES = ['quarter_final', 'semi_final', 'third_place', 'final'] as const
+
+          function SectionHeader({ color, label }: { color: string; label: string }) {
+            return (
+              <div className="flex items-center gap-2 mt-1">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                <span className="font-semibold text-sm" style={{ color }}>{label}</span>
+              </div>
+            )
+          }
+
+          if (tab === 'matches') {
+            const live = liveMatches
+            const done = finishedMatches
+            const doneGroup = done.filter(m => m.phase === 'group')
+            const doneKnockout = done.filter(m => m.phase !== 'group')
+
+            if (live.length === 0 && done.length === 0) {
+              return (
+                <Card className="text-center py-8">
+                  <p style={{ color: 'var(--text-secondary)' }}>Nog geen gespeelde wedstrijden</p>
+                </Card>
+              )
+            }
+            return (
+              <div className="flex flex-col gap-5">
+                {live.length > 0 && (
+                  <div className="flex flex-col gap-3">
+                    <SectionHeader color="var(--green)" label="Live" />
+                    {live.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                  </div>
+                )}
+                {numPools > 1
+                  ? Array.from({ length: numPools }, (_, p) => {
+                      const pm = doneGroup.filter(m => (m.home_team?.pool ?? 1) === p + 1)
+                      if (pm.length === 0) return null
+                      return (
+                        <div key={p} className="flex flex-col gap-3">
+                          <SectionHeader color={pool_colors[p] ?? '#FF6B00'} label={poolLabel(p)} />
+                          {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                        </div>
+                      )
+                    })
+                  : doneGroup.length > 0 && (
+                      <div className="flex flex-col gap-3">
+                        {doneGroup.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                      </div>
+                    )}
+                {KNOCKOUT_PHASES.map(phase => {
+                  const pm = doneKnockout.filter(m => m.phase === phase)
+                  if (pm.length === 0) return null
+                  return (
+                    <div key={phase} className="flex flex-col gap-3">
+                      <SectionHeader color="var(--orange)" label={`🏆 ${PHASE_LABELS[phase]}`} />
+                      {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          }
+
+          // schedule tab
+          const schedGroup = scheduledMatches.filter(m => m.phase === 'group')
+          const schedKnockout = scheduledMatches.filter(m => m.phase !== 'group')
+
+          if (scheduledMatches.length === 0) {
+            return (
               <Card className="text-center py-8">
                 <p style={{ color: 'var(--text-secondary)' }}>Geen geplande wedstrijden meer</p>
               </Card>
-            )}
-          </div>
-        )}
+            )
+          }
+          return (
+            <div className="flex flex-col gap-5">
+              {numPools > 1
+                ? Array.from({ length: numPools }, (_, p) => {
+                    const pm = schedGroup.filter(m => (m.home_team?.pool ?? 1) === p + 1)
+                    if (pm.length === 0) return null
+                    return (
+                      <div key={p} className="flex flex-col gap-3">
+                        <SectionHeader color={pool_colors[p] ?? '#FF6B00'} label={poolLabel(p)} />
+                        {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                      </div>
+                    )
+                  })
+                : schedGroup.length > 0 && (
+                    <div className="flex flex-col gap-3">
+                      {schedGroup.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                    </div>
+                  )}
+              {KNOCKOUT_PHASES.map(phase => {
+                const pm = schedKnockout.filter(m => m.phase === phase)
+                if (pm.length === 0) return null
+                return (
+                  <div key={phase} className="flex flex-col gap-3">
+                    <SectionHeader color="var(--orange)" label={`🏆 ${PHASE_LABELS[phase]}`} />
+                    {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {/* Favorites hint */}
         <p className="text-xs text-center mt-6" style={{ color: 'var(--text-secondary)' }}>

@@ -33,6 +33,17 @@ function Stepper({ value, min, max, onChange }: { value: number; min: number; ma
   )
 }
 
+function ColorDot({ color, onChange }: { color: string; onChange: (c: string) => void }) {
+  return (
+    <label className="relative cursor-pointer flex-shrink-0" title="Klik om kleur te wijzigen">
+      <span className="w-6 h-6 rounded-full block"
+        style={{ backgroundColor: color, boxShadow: '0 0 0 2px rgba(255,255,255,0.18)' }} />
+      <input type="color" value={color} onChange={e => onChange(e.target.value)}
+        className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" />
+    </label>
+  )
+}
+
 export default function NewTournamentPage() {
   const router = useRouter()
   const [step, setStep]       = useState(1)
@@ -48,17 +59,20 @@ export default function NewTournamentPage() {
   const [finalsType, setFinals]     = useState<'none'|'final'|'semi_final'|'quarter_final'>('final')
   const [numPools, setNumPools]     = useState(1)
 
-  // ── Step 2: team names + pool assignment ─────────────────────────────────
+  // ── Step 2: team names, colors + pool assignment ─────────────────────────
   const [teamNames, setTeamNames]   = useState<string[]>([])
+  const [teamColors, setTeamColors] = useState<string[]>([])
   const [teamPools, setTeamPools]   = useState<number[]>([]) // 1-indexed pool per team
+  const [poolNames, setPoolNames]   = useState(['Poule A', 'Poule B', 'Poule C', 'Poule D'])
 
   // ── Preview calculations (live, no side-effects) ─────────────────────────
   const preview = useMemo(() => previewSchedule(numTeams, numFields, numPools), [numTeams, numFields, numPools])
 
-  // Go to step 2: initialise team names + evenly distribute pools
+  // Go to step 2: initialise team names, colors + evenly distribute pools
   const handleStep1 = () => {
     if (!name.trim()) return
     setTeamNames(Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`))
+    setTeamColors(Array.from({ length: numTeams }, (_, i) => TEAM_COLORS[i % TEAM_COLORS.length]))
     setTeamPools(Array.from({ length: numTeams }, (_, i) => Math.floor(i * numPools / numTeams) + 1))
     setStep(2)
   }
@@ -82,6 +96,7 @@ export default function NewTournamentPage() {
           total_duration_minutes: totalMinutes ? parseInt(totalMinutes) : null,
           finals_type: finalsType,
           num_pools: numPools,
+          pool_names: numPools > 1 ? poolNames.slice(0, numPools) : null,
           status: 'draft',
         }).select().single()
 
@@ -93,12 +108,12 @@ export default function NewTournamentPage() {
           tournament_id: tournament.id, name: `Veld ${i+1}`, display_order: i,
         }))).select()
 
-      // Teams (with pool)
+      // Teams (with pool + chosen color)
       const { data: teams } = await supabase.from('teams')
         .insert(teamNames.map((n, i) => ({
           tournament_id: tournament.id,
           name: n.trim() || `Team ${i+1}`,
-          color: TEAM_COLORS[i % TEAM_COLORS.length],
+          color: teamColors[i] ?? TEAM_COLORS[i % TEAM_COLORS.length],
           pool: teamPools[i] ?? 1,
         }))).select()
 
@@ -320,8 +335,9 @@ export default function NewTournamentPage() {
                 <div className="flex flex-col gap-3">
                   {teamNames.map((n, i) => (
                     <div key={i} className="flex items-center gap-3">
-                      <div className="w-5 h-5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: TEAM_COLORS[i % TEAM_COLORS.length] }} />
+                      <ColorDot
+                        color={teamColors[i] ?? TEAM_COLORS[i % TEAM_COLORS.length]}
+                        onChange={c => { const next=[...teamColors]; next[i]=c; setTeamColors(next) }} />
                       <input value={n}
                         onChange={e => { const next=[...teamNames]; next[i]=e.target.value; setTeamNames(next) }}
                         className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
@@ -339,19 +355,22 @@ export default function NewTournamentPage() {
                 </p>
                 {Array.from({ length: numPools }, (_, p) => {
                   const poolColor = POOL_COLORS[p]
-                  const poolLabel = POOL_LABELS[p]
                   const teamsInPool = teamNames.map((_, i) => i).filter(i => teamPools[i] === p + 1)
-                  const nextPool = POOL_LABELS[(p + 1) % numPools]
+                  const nextPoolLabel = poolNames[(p + 1) % numPools] ?? POOL_LABELS[(p + 1) % numPools]
 
                   return (
                     <div key={p} className="rounded-2xl overflow-hidden"
                       style={{ border: `1.5px solid ${poolColor}50` }}>
+                      {/* Editable pool header */}
                       <div className="px-4 py-2.5 flex items-center justify-between"
                         style={{ backgroundColor: `${poolColor}18` }}>
-                        <span className="font-bold text-sm" style={{ color: poolColor }}>
-                          Poule {poolLabel}
-                        </span>
-                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        <input
+                          value={poolNames[p] ?? ''}
+                          onChange={e => { const next=[...poolNames]; next[p]=e.target.value; setPoolNames(next) }}
+                          className="font-bold text-sm bg-transparent outline-none min-w-0"
+                          style={{ color: poolColor }}
+                          placeholder={`Poule ${POOL_LABELS[p]}`} />
+                        <span className="text-xs flex-shrink-0 ml-2" style={{ color: 'var(--text-secondary)' }}>
                           {teamsInPool.length} teams
                         </span>
                       </div>
@@ -364,8 +383,9 @@ export default function NewTournamentPage() {
                         )}
                         {teamsInPool.map(i => (
                           <div key={i} className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full flex-shrink-0"
-                              style={{ backgroundColor: TEAM_COLORS[i % TEAM_COLORS.length] }} />
+                            <ColorDot
+                              color={teamColors[i] ?? TEAM_COLORS[i % TEAM_COLORS.length]}
+                              onChange={c => { const next=[...teamColors]; next[i]=c; setTeamColors(next) }} />
                             <input value={teamNames[i]}
                               onChange={e => { const next=[...teamNames]; next[i]=e.target.value; setTeamNames(next) }}
                               className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
@@ -374,8 +394,8 @@ export default function NewTournamentPage() {
                             <button onClick={() => cyclePool(i)}
                               className="px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer whitespace-nowrap"
                               style={{ backgroundColor: `${poolColor}20`, color: poolColor, border: `1px solid ${poolColor}40` }}
-                              title={`Verplaats naar Poule ${nextPool}`}>
-                              → {nextPool}
+                              title={`Verplaats naar ${nextPoolLabel}`}>
+                              → {nextPoolLabel.split(' ').pop()}
                             </button>
                           </div>
                         ))}
