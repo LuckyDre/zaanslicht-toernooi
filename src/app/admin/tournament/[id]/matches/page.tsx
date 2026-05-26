@@ -49,34 +49,36 @@ function sortStanding(a: Standing, b: Standing) {
   return b.goals_for - a.goals_for
 }
 
-/** Return the top-ranked team ID from each pool (pool winners) */
-function getPoolWinners(standings: Standing[], numPools: number): string[] {
-  return Array.from({ length: numPools }, (_, p) =>
-    standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)[0]?.team_id
-  ).filter(Boolean) as string[]
+/** Return the top-2 team IDs from each pool (winners + runner-ups) */
+function getPoolTop2(standings: Standing[], numPools: number): { winners: string[]; runnerUps: string[] } {
+  const winners: string[] = []
+  const runnerUps: string[] = []
+  for (let p = 0; p < numPools; p++) {
+    const sorted = standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)
+    if (sorted[0]) winners.push(sorted[0].team_id)
+    if (sorted[1]) runnerUps.push(sorted[1].team_id)
+  }
+  return { winners, runnerUps }
 }
 
 /**
- * Generate round-robin rounds for the finale poule.
- * Uses the circle algorithm — each team appears at most once per round,
- * so matches can be played simultaneously on different fields.
- * Returns rounds as arrays of [homeId, awayId] pairs.
+ * Cross-rank finale: #1 from pool X plays #2 from every other pool.
+ * P pools → P*(P-1) matches in P-1 rounds of P simultaneous matches.
+ * Round r, pool p: winners[p] vs runnerUps[(p + r + 1) % P]
+ *
+ * Example (P=3):
+ *   Round 1: A1vsB2, B1vsC2, C1vsA2
+ *   Round 2: A1vsC2, B1vsA2, C1vsB2
  */
-function generateFinalePouleRounds(teamIds: string[]): [string, string][][] {
-  const t: (string | null)[] = [...teamIds]
-  if (t.length % 2 !== 0) t.push(null) // bye slot
-  const n = t.length
+function generateCrossRankFinale(winners: string[], runnerUps: string[]): [string, string][][] {
+  const P = winners.length
   const rounds: [string, string][][] = []
-
-  for (let r = 0; r < n - 1; r++) {
-    const roundMatches: [string, string][] = []
-    for (let i = 0; i < n / 2; i++) {
-      const home = t[i], away = t[n - 1 - i]
-      if (home && away) roundMatches.push([home, away])
+  for (let r = 0; r < P - 1; r++) {
+    const round: [string, string][] = []
+    for (let p = 0; p < P; p++) {
+      round.push([winners[p], runnerUps[(p + r + 1) % P]])
     }
-    rounds.push(roundMatches)
-    // Rotate: keep t[0] fixed
-    t.splice(1, 0, t.pop()!)
+    rounds.push(round)
   }
   return rounds
 }
@@ -438,15 +440,15 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       let roundNum = maxKORound + 1
 
       if (isMultiPool) {
-        // ── Multi-pool: finale poule (cross-pool round-robin) ──────────────
-        // Poule winners (1 per pool) play a full round-robin — never same pool vs same pool.
-        // Each round has floor(numWinners/2) simultaneous matches on different fields.
-        const winners = getPoolWinners(currentStandings, tournament.num_pools)
-        if (winners.length < 2) {
-          alert('Niet genoeg poulewinnaars gevonden. Zijn alle groepswedstrijden afgerond?')
+        // ── Multi-pool: cross-rank finale ──────────────────────────────────
+        // #1 from each pool plays #2 from every other pool.
+        // P pools → P*(P-1) matches in (P-1) rounds of P simultaneous matches.
+        const { winners, runnerUps } = getPoolTop2(currentStandings, tournament.num_pools)
+        if (winners.length < 2 || runnerUps.length < 2) {
+          alert('Niet genoeg teams gevonden (nummer 1 én 2 per poel nodig). Zijn alle groepswedstrijden afgerond?')
           setGeneratingKO(false); return
         }
-        const rounds = generateFinalePouleRounds(winners)
+        const rounds = generateCrossRankFinale(winners, runnerUps)
         for (const roundMatches of rounds) {
           for (let i = 0; i < roundMatches.length; i += numFields) {
             const chunk = roundMatches.slice(i, i + numFields)
@@ -457,7 +459,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                 round: roundNum, match_number: mn++,
                 phase: 'final' as const,
                 status: 'scheduled' as const,
-                field_id: fields[fi]?.id ?? null,
+                field_id: fields[fi % fields.length]?.id ?? null,
               })
             })
             roundNum++
@@ -580,9 +582,13 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const showGenerateButton = canGenerateFirst || canGenerateNext
   const generateButtonLabel = (() => {
     if (canGenerateFirst) {
-      return isMultiPool
-        ? `🏆 Genereer finale poule (${tournament!.num_pools} poulewinnaars)`
-        : `🏆 Genereer finales (${KO_LABEL[FINALS_PHASE[tournament?.finals_type ?? ''] ?? 'final'] ?? 'Finale'})`
+      if (isMultiPool) {
+        const P = tournament!.num_pools
+        const totalMatches = P * (P - 1)
+        const rounds = P - 1
+        return `🏆 Genereer finale poule (${P} × 2 teams, ${totalMatches} wedstrijden in ${rounds} rondes)`
+      }
+      return `🏆 Genereer finales (${KO_LABEL[FINALS_PHASE[tournament?.finals_type ?? ''] ?? 'final'] ?? 'Finale'})`
     }
     if (latestKOPhase === 'quarter_final') return '🏆 Genereer halve finales'
     if (latestKOPhase === 'semi_final')    return '🏆 Genereer finale & 3e plaats'
