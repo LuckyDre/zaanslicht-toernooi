@@ -9,39 +9,25 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 
-function ScoreInput({
-  value,
-  onChange,
-}: {
-  value: number
-  onChange: (v: number) => void
-}) {
+function ScoreInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
     <div className="flex items-center gap-2">
       <button
         onClick={() => onChange(Math.max(0, value - 1))}
-        className="w-10 h-10 rounded-lg text-xl font-bold cursor-pointer transition-colors flex items-center justify-center"
+        className="w-12 h-12 rounded-xl text-2xl font-bold cursor-pointer transition-colors flex items-center justify-center active:scale-95"
         style={{ backgroundColor: 'var(--bg-base)' }}
-      >
-        −
-      </button>
-      <span className="text-2xl font-bold font-mono w-8 text-center">{value}</span>
+      >−</button>
+      <span className="text-3xl font-bold font-mono w-10 text-center">{value}</span>
       <button
         onClick={() => onChange(value + 1)}
-        className="w-10 h-10 rounded-lg text-xl font-bold cursor-pointer transition-colors flex items-center justify-center"
+        className="w-12 h-12 rounded-xl text-2xl font-bold cursor-pointer transition-colors flex items-center justify-center active:scale-95"
         style={{ backgroundColor: 'var(--orange)', color: '#fff' }}
-      >
-        +
-      </button>
+      >+</button>
     </div>
   )
 }
 
-type MatchState = {
-  homeScore: number
-  awayScore: number
-  saving: boolean
-}
+type MatchState = { homeScore: number; awayScore: number; saving: boolean; saved: boolean; error: string | null }
 
 export default function MatchesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -71,11 +57,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
         setMatches(list)
         const init: Record<string, MatchState> = {}
         list.forEach(m => {
-          init[m.id] = {
-            homeScore: m.home_score ?? 0,
-            awayScore: m.away_score ?? 0,
-            saving: false,
-          }
+          init[m.id] = { homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, saving: false, saved: false, error: null }
         })
         setStates(init)
         setLoading(false)
@@ -89,7 +71,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const handleSave = async (match: Match, status: 'live' | 'finished') => {
     const s = states[match.id]
     if (!s) return
-    updateState(match.id, { saving: true })
+    updateState(match.id, { saving: true, error: null, saved: false })
 
     const { error } = await supabase.from('matches').update({
       home_score: s.homeScore,
@@ -99,13 +81,42 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       finished_at: status === 'finished' ? new Date().toISOString() : null,
     }).eq('id', match.id)
 
-    if (!error) {
+    if (error) {
+      updateState(match.id, { saving: false, error: `Fout: ${error.message}` })
+    } else {
       setMatches(prev => prev.map(m => m.id === match.id
-        ? { ...m, home_score: s.homeScore, away_score: s.awayScore, status }
+        ? { ...m, home_score: s.homeScore, away_score: s.awayScore, status,
+            started_at: status === 'live' && !m.started_at ? new Date().toISOString() : m.started_at,
+            finished_at: status === 'finished' ? new Date().toISOString() : null }
         : m
       ))
+      updateState(match.id, { saving: false, saved: true, error: null })
+      // Reset "saved" indicator after 2 seconds
+      setTimeout(() => updateState(match.id, { saved: false }), 2000)
     }
-    updateState(match.id, { saving: false })
+  }
+
+  // Save score without changing status (for live matches)
+  const handleScoreUpdate = async (match: Match) => {
+    const s = states[match.id]
+    if (!s) return
+    updateState(match.id, { saving: true, error: null, saved: false })
+
+    const { error } = await supabase.from('matches').update({
+      home_score: s.homeScore,
+      away_score: s.awayScore,
+    }).eq('id', match.id)
+
+    if (error) {
+      updateState(match.id, { saving: false, error: `Fout: ${error.message}` })
+    } else {
+      setMatches(prev => prev.map(m => m.id === match.id
+        ? { ...m, home_score: s.homeScore, away_score: s.awayScore }
+        : m
+      ))
+      updateState(match.id, { saving: false, saved: true })
+      setTimeout(() => updateState(match.id, { saved: false }), 2000)
+    }
   }
 
   const filtered = matches.filter(m => activeFilter === 'all' || m.status === activeFilter)
@@ -142,17 +153,14 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             { key: 'scheduled', label: `Gepland (${scheduledCount})` },
             { key: 'finished', label: `Klaar (${finishedCount})` },
           ].map(f => (
-            <button
-              key={f.key}
+            <button key={f.key}
               onClick={() => setActiveFilter(f.key as typeof activeFilter)}
               className="flex-1 py-1.5 px-2 rounded-lg text-xs font-medium cursor-pointer transition-all"
               style={{
                 backgroundColor: activeFilter === f.key ? 'var(--orange)' : 'transparent',
                 color: activeFilter === f.key ? '#fff' : 'var(--text-secondary)',
               }}
-            >
-              {f.label}
-            </button>
+            >{f.label}</button>
           ))}
         </div>
 
@@ -171,90 +179,77 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
               return (
                 <Card key={match.id} style={{ border: `1px solid ${isLive ? 'var(--green)' : 'var(--border)'}` }}>
-                  {/* Match header */}
+                  {/* Header */}
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
                       {match.field ? match.field.name : `Wedstrijd #${match.match_number}`}
                       {match.round ? ` · Ronde ${match.round}` : ''}
                     </span>
-                    <Badge variant={isLive ? 'green' : isDone ? 'gray' : 'yellow'}>
-                      {isLive ? '● LIVE' : isDone ? 'Gespeeld' : 'Gepland'}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      {s.saved && <span className="text-xs" style={{ color: 'var(--green)' }}>✓ Opgeslagen</span>}
+                      <Badge variant={isLive ? 'green' : isDone ? 'gray' : 'yellow'}>
+                        {isLive ? '● LIVE' : isDone ? 'Gespeeld' : 'Gepland'}
+                      </Badge>
+                    </div>
                   </div>
 
-                  {/* Teams + Score inputs */}
-                  <div className="flex items-center gap-3">
-                    {/* Home team */}
+                  {/* Teams + Scores */}
+                  <div className="flex items-center gap-3 mb-4">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }}
-                        />
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="w-3 h-3 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: match.home_team?.color || 'var(--orange)' }} />
                         <span className="font-semibold truncate text-sm">{match.home_team?.name ?? '—'}</span>
                       </div>
-                      <ScoreInput
-                        value={s.homeScore}
-                        onChange={v => updateState(match.id, { homeScore: v })}
-                      />
+                      <ScoreInput value={s.homeScore} onChange={v => updateState(match.id, { homeScore: v, saved: false })} />
                     </div>
 
-                    <div className="text-xl font-bold" style={{ color: 'var(--text-secondary)' }}>vs</div>
+                    <div className="text-xl font-bold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>vs</div>
 
-                    {/* Away team */}
                     <div className="flex-1 min-w-0 flex flex-col items-end">
-                      <div className="flex items-center gap-2 mb-2 justify-end">
+                      <div className="flex items-center gap-2 mb-3 justify-end">
                         <span className="font-semibold truncate text-sm">{match.away_team?.name ?? '—'}</span>
-                        <span
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: match.away_team?.color || '#888' }}
-                        />
+                        <span className="w-3 h-3 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: match.away_team?.color || '#888' }} />
                       </div>
-                      <ScoreInput
-                        value={s.awayScore}
-                        onChange={v => updateState(match.id, { awayScore: v })}
-                      />
+                      <ScoreInput value={s.awayScore} onChange={v => updateState(match.id, { awayScore: v, saved: false })} />
                     </div>
                   </div>
 
-                  {/* Action buttons */}
-                  {!isDone && (
-                    <div className="flex gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
-                      {!isLive && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          loading={s.saving}
-                          onClick={() => handleSave(match, 'live')}
-                          className="flex-1"
-                        >
-                          ▶ Start
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        loading={s.saving}
-                        onClick={() => handleSave(match, 'finished')}
-                        className="flex-1"
-                      >
-                        ✓ Opslaan & Afsluiten
-                      </Button>
+                  {/* Error */}
+                  {s.error && (
+                    <div className="mb-3 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: '#ef444422', color: 'var(--red)' }}>
+                      {s.error}
                     </div>
                   )}
 
-                  {isDone && (
-                    <div className="flex gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={s.saving}
-                        onClick={() => handleSave(match, 'finished')}
-                        className="flex-1"
-                      >
-                        Score aanpassen
+                  {/* Buttons */}
+                  <div className="flex gap-2 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+                    {!isDone && !isLive && (
+                      <Button size="sm" variant="secondary" loading={s.saving}
+                        onClick={() => handleSave(match, 'live')} className="flex-1">
+                        ▶ Start wedstrijd
                       </Button>
-                    </div>
-                  )}
+                    )}
+                    {isLive && (
+                      <Button size="sm" variant="secondary" loading={s.saving}
+                        onClick={() => handleScoreUpdate(match)} className="flex-1">
+                        💾 Score opslaan
+                      </Button>
+                    )}
+                    {!isDone && (
+                      <Button size="sm" loading={s.saving}
+                        onClick={() => handleSave(match, 'finished')} className="flex-1">
+                        ✓ Afsluiten
+                      </Button>
+                    )}
+                    {isDone && (
+                      <Button size="sm" variant="secondary" loading={s.saving}
+                        onClick={() => handleSave(match, 'finished')} className="flex-1">
+                        ✏️ Score aanpassen
+                      </Button>
+                    )}
+                  </div>
                 </Card>
               )
             })}
