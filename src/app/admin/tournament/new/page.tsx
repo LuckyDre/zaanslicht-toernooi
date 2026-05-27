@@ -10,6 +10,84 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
+// ── Advies engine ─────────────────────────────────────────────────────────────
+function getAdvice(numTeams: number, numFields: number, matchMinutes: number, numHalves: 1 | 2) {
+  // Zoek de beste poule-indeling (1–4 poules)
+  // Scoreer elke optie: poules van 4 teams = ideaal, gelijke grootte = bonus
+  let suggestedPools = 1
+  let bestScore = -Infinity
+  for (let p = 1; p <= Math.min(4, numTeams); p++) {
+    if (numTeams < p * 2) break // minimaal 2 teams per poule
+    const avg = numTeams / p
+    const sizes = Array.from({ length: p }, (_, i) =>
+      Math.floor(numTeams / p) + (i < numTeams % p ? 1 : 0)
+    )
+    const isEqual = sizes.every(s => s === sizes[0])
+    const score = -Math.abs(avg - 4) * 3 + (isEqual ? 4 : 0) + (p > 1 ? 1 : 0)
+    if (score > bestScore) { bestScore = score; suggestedPools = p }
+  }
+
+  const poolSizes = Array.from({ length: suggestedPools }, (_, i) =>
+    Math.floor(numTeams / suggestedPools) + (i < numTeams % suggestedPools ? 1 : 0)
+  )
+  const isEqual   = poolSizes.every(s => s === poolSizes[0])
+  const avgSize   = numTeams / suggestedPools
+  const minSize   = Math.min(...poolSizes)
+
+  const items: { icon: string; text: string; warn: boolean }[] = []
+
+  // ── Poule-grootte ──────────────────────────────────────────────────────────
+  if (isEqual && avgSize === 4) {
+    items.push({ icon: '✅', text: `${suggestedPools} ${suggestedPools === 1 ? 'poule' : 'poules'} van 4 teams — ideaal: elk team speelt 3 groepswedstrijden`, warn: false })
+  } else if (isEqual && avgSize >= 3 && avgSize <= 5) {
+    items.push({ icon: '✅', text: `${suggestedPools} ${suggestedPools === 1 ? 'poule' : 'poules'} van ${Math.round(avgSize)} teams — goed werkbaar`, warn: false })
+  } else if (minSize < 3) {
+    items.push({ icon: '⚠️', text: `Te weinig teams per poule (${poolSizes.join(' + ')}) — elke poule heeft minimaal 3 teams nodig`, warn: true })
+  } else {
+    const nearest = [suggestedPools * 3, suggestedPools * 4, suggestedPools * 5].find(n => n >= numTeams - 2)
+    items.push({ icon: '⚠️', text: `Ongelijke poules (${poolSizes.join(' + ')} teams) — kies ${nearest ?? suggestedPools * 4} teams voor gelijke poules`, warn: true })
+  }
+
+  // ── Velden vs poules ───────────────────────────────────────────────────────
+  if (suggestedPools > 1) {
+    if (numFields >= suggestedPools) {
+      items.push({ icon: '✅', text: `${numFields} velden, ${suggestedPools} poules — alle poules spelen tegelijk, geen wachttijd`, warn: false })
+    } else {
+      items.push({ icon: 'ℹ️', text: `${numFields} veld${numFields > 1 ? 'en' : ''} voor ${suggestedPools} poules — poules wisselen van veld, rondes duren iets langer`, warn: false })
+    }
+  } else if (numFields > 1) {
+    items.push({ icon: 'ℹ️', text: `${numFields} velden, 1 poule — alle velden draaien tegelijk, rondes gaan snel`, warn: false })
+  }
+
+  // ── Finale-advies ──────────────────────────────────────────────────────────
+  let suggestedFinale: 'none' | 'final' | 'semi_final' | 'quarter_final'
+  let finaleText: string
+  if (numTeams < 4) {
+    suggestedFinale = 'none'
+    finaleText = 'geen finale (te weinig teams)'
+  } else if (numTeams >= 16 && suggestedPools >= 4) {
+    suggestedFinale = 'quarter_final'
+    finaleText = 'kwartfinales → halve finales → finale (8 teams)'
+  } else {
+    suggestedFinale = 'semi_final'
+    finaleText = suggestedPools > 1
+      ? `halve finales → finale (top 1 per poule + beste runner-up = 4 teams)`
+      : `halve finales → finale (top 4)`
+  }
+  items.push({ icon: '🏆', text: `Aanbevolen finale: ${finaleText}`, warn: false })
+
+  // ── Tijdschatting ──────────────────────────────────────────────────────────
+  const { rounds } = previewSchedule(numTeams, numFields, suggestedPools)
+  const FINALE_ROUNDS: Record<string, number> = { none: 0, final: 1, semi_final: 2, quarter_final: 3 }
+  const finaleRounds = FINALE_ROUNDS[suggestedFinale] ?? 0
+  const totalMin = (rounds + finaleRounds) * matchMinutes * numHalves
+  const h = Math.floor(totalMin / 60), m = totalMin % 60
+  const durStr = h > 0 ? `${h} uur${m > 0 ? ` ${m} min` : ''}` : `${m} minuten`
+  items.push({ icon: '⏱', text: `Geschatte speeltijd: ca. ${durStr} (excl. pauzes en wisseltijden)`, warn: false })
+
+  return { suggestedPools, suggestedFinale, items }
+}
+
 const TEAM_COLORS = [
   '#FF6B00','#3B82F6','#22c55e','#ef4444','#a855f7',
   '#06b6d4','#f59e0b','#ec4899','#14b8a6','#6366f1',
@@ -67,6 +145,7 @@ export default function NewTournamentPage() {
 
   // ── Preview calculations (live, no side-effects) ─────────────────────────
   const preview = useMemo(() => previewSchedule(numTeams, numFields, numPools), [numTeams, numFields, numPools])
+  const advice  = useMemo(() => getAdvice(numTeams, numFields, matchMinutes, numHalves), [numTeams, numFields, matchMinutes, numHalves])
 
   // Go to step 2: initialise team names, colors + evenly distribute pools
   const handleStep1 = () => {
@@ -219,6 +298,32 @@ export default function NewTournamentPage() {
                 </div>
               </div>
             </Card>
+
+            {/* ── Advies box ── */}
+            <div className="rounded-2xl p-4" style={{ backgroundColor: '#0ea5e915', border: '1.5px solid #0ea5e950' }}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <p className="font-bold text-sm" style={{ color: '#0ea5e9' }}>💡 Advies voor jouw toernooi</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>Niet bindend — je kunt alles zelf aanpassen</p>
+                </div>
+                <button
+                  onClick={() => { setNumPools(advice.suggestedPools); setFinals(advice.suggestedFinale) }}
+                  className="text-xs font-bold px-3 py-2 rounded-xl cursor-pointer flex-shrink-0 transition-opacity hover:opacity-80 active:scale-95"
+                  style={{ backgroundColor: '#0ea5e925', color: '#0ea5e9', border: '1px solid #0ea5e960' }}>
+                  Toepassen →
+                </button>
+              </div>
+              <div className="flex flex-col gap-2.5">
+                {advice.items.map((item, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="text-sm flex-shrink-0 leading-5">{item.icon}</span>
+                    <span className="text-sm leading-5" style={{ color: item.warn ? '#f59e0b' : 'var(--text-primary)' }}>
+                      {item.text}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             {/* Poule-indeling */}
             <Card>
