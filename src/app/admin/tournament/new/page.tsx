@@ -91,11 +91,29 @@ function getAdvice(numTeams: number, numFields: number, matchMinutes: number, nu
   return { suggestedPools, suggestedFinale, items }
 }
 
-const TEAM_COLORS = [
-  '#FF6B00','#3B82F6','#22c55e','#ef4444','#a855f7',
-  '#06b6d4','#f59e0b','#ec4899','#14b8a6','#6366f1',
-  '#84cc16','#f97316','#0ea5e9','#8b5cf6','#10b981','#F5E642',
+/** Eredivisie-clubs met hun primaire trikot-kleur (seizoen 2024-2025) */
+const EREDIVISIE_TEAMS: { name: string; color: string }[] = [
+  { name: 'Ajax',              color: '#D2122E' }, // rood met witte verticale streep
+  { name: 'PSV',               color: '#CC2229' }, // rood met witte strepen
+  { name: 'Feyenoord',         color: '#C8102E' }, // rood / wit gehalveerd
+  { name: 'AZ',                color: '#E50000' }, // rood / wit
+  { name: 'FC Twente',         color: '#E4000F' }, // rood / wit
+  { name: 'FC Utrecht',        color: '#D01515' }, // rood / wit
+  { name: 'Heerenveen',        color: '#1B5091' }, // blauw / witte strepen
+  { name: 'Sparta Rotterdam',  color: '#B5121B' }, // rood / wit horizontale strepen
+  { name: 'NEC',               color: '#CC0000' }, // rood / zwart
+  { name: 'Go Ahead Eagles',   color: '#F5C400' }, // rood / goud
+  { name: 'FC Groningen',      color: '#006633' }, // groen / wit
+  { name: 'NAC Breda',         color: '#F0B400' }, // geel / zwarte strepen
+  { name: 'RKC Waalwijk',      color: '#003DA5' }, // geel / blauw
+  { name: 'Almere City',       color: '#0066B3' }, // rood / blauw
+  { name: 'PEC Zwolle',        color: '#005CA9' }, // blauw / wit
+  { name: 'Willem II',         color: '#8B0000' }, // rood / wit / blauw
+  { name: 'Heracles Almelo',   color: '#2C2C2C' }, // zwart / wit
+  { name: 'Fortuna Sittard',   color: '#FFD700' }, // geel / groen
 ]
+
+const TEAM_COLORS = EREDIVISIE_TEAMS.map(t => t.color)
 
 const POOL_COLORS  = ['#FF6B00', '#3B82F6', '#22c55e', '#a855f7']
 const POOL_LABELS  = ['A', 'B', 'C', 'D']
@@ -155,8 +173,8 @@ export default function NewTournamentPage() {
   // Go to step 2: initialise team names, colors + evenly distribute pools
   const handleStep1 = () => {
     if (!name.trim()) return
-    setTeamNames(Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`))
-    setTeamColors(Array.from({ length: numTeams }, (_, i) => TEAM_COLORS[i % TEAM_COLORS.length]))
+    setTeamNames(Array.from({ length: numTeams }, (_, i) => EREDIVISIE_TEAMS[i]?.name ?? `Team ${i + 1}`))
+    setTeamColors(Array.from({ length: numTeams }, (_, i) => EREDIVISIE_TEAMS[i]?.color ?? TEAM_COLORS[i % TEAM_COLORS.length]))
     setTeamPools(Array.from({ length: numTeams }, (_, i) => Math.floor(i * numPools / numTeams) + 1))
     setStep(2)
   }
