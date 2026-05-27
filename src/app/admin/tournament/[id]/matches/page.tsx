@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { supabase, Match, Tournament, Standing, Field } from '@/lib/supabase'
 import { Navbar } from '@/components/ui/Navbar'
 import { Button } from '@/components/ui/Button'
+import { BracketOverlay } from '@/components/admin/BracketOverlay'
 
 type MS = { homeScore: number; awayScore: number; saving: boolean; saved: boolean; error: string | null }
 type RS = 'scheduled' | 'live' | 'finished'
@@ -273,6 +274,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [roundSaving, setRoundSaving]     = useState(false)
   const [stopAllSaving, setStopAllSaving] = useState(false)
   const [generatingKO, setGeneratingKO]   = useState(false)
+  const [showBracket, setShowBracket]     = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -572,6 +574,43 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
   const isMultiPool = (tournament?.num_pools ?? 1) > 1
 
+  // ── Compute tournament winner for winner banner ─────────────────────────────
+  const allMatchesDone = matches.length > 0 && matches.every(m => m.status === 'finished' || m.status === 'cancelled')
+  const tournamentWinner = useMemo((): { name: string; color: string } | null => {
+    if (!allMatchesDone || koMatches.length === 0) return null
+    if (isMultiPool) {
+      // Multi-pool: compute finale ranking, take #1
+      const finaleMs = matches.filter(m => m.phase !== 'group')
+      if (finaleMs.length === 0) return null
+      // Inline mini-league computation (mirrors BracketOverlay logic)
+      const stats: Record<string, { name: string; color: string; pts: number; gf: number; ga: number }> = {}
+      for (const m of finaleMs) {
+        if (m.status !== 'finished' || m.home_score === null || m.away_score === null) continue
+        const hid = m.home_team_id, aid = m.away_team_id
+        if (!stats[hid]) stats[hid] = { name: m.home_team?.name ?? '?', color: m.home_team?.color ?? '#f59e0b', pts: 0, gf: 0, ga: 0 }
+        if (!stats[aid]) stats[aid] = { name: m.away_team?.name ?? '?', color: m.away_team?.color ?? '#f59e0b', pts: 0, gf: 0, ga: 0 }
+        const hs = m.home_score, as_ = m.away_score
+        stats[hid].gf += hs; stats[hid].ga += as_
+        stats[aid].gf += as_; stats[aid].ga += hs
+        if (hs > as_) { stats[hid].pts += 3 }
+        else if (hs < as_) { stats[aid].pts += 3 }
+        else { stats[hid].pts++; stats[aid].pts++ }
+      }
+      const sorted = Object.values(stats).sort((a, b) => {
+        if (b.pts !== a.pts) return b.pts - a.pts
+        return (b.gf - b.ga) - (a.gf - a.ga)
+      })
+      return sorted[0] ?? null
+    } else {
+      // Single-pool: winner of the final match
+      const finalMatch = koMatches.find(m => m.phase === 'final' && m.status === 'finished')
+      if (!finalMatch) return null
+      const winnerTeam = (finalMatch.home_score ?? 0) >= (finalMatch.away_score ?? 0)
+        ? finalMatch.home_team : finalMatch.away_team
+      return winnerTeam ? { name: winnerTeam.name, color: winnerTeam.color ?? '#f59e0b' } : null
+    }
+  }, [allMatchesDone, koMatches, isMultiPool, matches])
+
   const canGenerateFirst = !!tournament && tournament.finals_type !== 'none' && allGroupDone && koMatches.length === 0
   // Next-round button only makes sense for single-pool knockout; multi-pool finale poule is one shot
   const canGenerateNext  = !isMultiPool && !!latestKOPhase && allLatestKODone
@@ -597,6 +636,14 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div className="min-h-screen pb-8" style={{ backgroundColor: 'var(--bg-base)' }}>
+      {showBracket && tournament && (
+        <BracketOverlay
+          tournament={tournament}
+          matches={matches}
+          standings={standings}
+          onClose={() => setShowBracket(false)}
+        />
+      )}
       <Navbar isAdmin />
       <main className="max-w-xl mx-auto px-4 py-5">
 
@@ -608,9 +655,12 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             </Link>
             <h1 className="text-xl font-bold leading-tight">{tournament?.name ?? '…'}</h1>
           </div>
-          <div className="flex gap-2 flex-shrink-0 mt-4">
+          <div className="flex gap-2 flex-shrink-0 mt-4 flex-wrap justify-end">
             {liveCount > 0 && (
               <Button size="sm" variant="danger" loading={stopAllSaving} onClick={stopAll}>■ Stop alles</Button>
+            )}
+            {koMatches.length > 0 && (
+              <Button size="sm" variant="secondary" onClick={() => setShowBracket(true)}>📊 Bracket</Button>
             )}
             <Link href={`/tournament/${id}`} target="_blank">
               <Button size="sm" variant="ghost">Live ↗</Button>
@@ -641,6 +691,21 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
               </p>
             )}
           </div>
+
+          {/* ── Tournament winner banner ── */}
+          {tournamentWinner && (
+            <div className="rounded-2xl p-5 text-center mb-5"
+              style={{ background: `linear-gradient(135deg, ${tournamentWinner.color}22, ${tournamentWinner.color}11)`, border: `2px solid ${tournamentWinner.color}` }}>
+              <div className="text-4xl mb-2">🏆</div>
+              <div className="font-bold text-xl" style={{ color: tournamentWinner.color }}>{tournamentWinner.name}</div>
+              <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>Winnaar toernooi</div>
+              <button onClick={() => setShowBracket(true)}
+                className="mt-3 text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer transition-opacity hover:opacity-80"
+                style={{ backgroundColor: `${tournamentWinner.color}30`, color: tournamentWinner.color, border: `1px solid ${tournamentWinner.color}66` }}>
+                📊 Bekijk volledig bracket →
+              </button>
+            </div>
+          )}
 
           {/* ── Generate KO banner ── */}
           {showGenerateButton && generateButtonLabel && (
