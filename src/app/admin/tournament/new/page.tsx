@@ -134,11 +134,11 @@ export default function NewTournamentPage() {
   const [name, setName]             = useState('')
   const [numFields, setNumFields]   = useState(2)
   const [numTeams, setNumTeams]     = useState(8)
-  const [matchMinutes, setMatch]    = useState(10)
+  const [matchMinutes, setMatch]    = useState(25)
   const [numHalves, setHalves]      = useState<1|2>(1)
   const [totalMinutes, setTotal]    = useState('')
   const [finalsType, setFinals]     = useState<'none'|'final'|'semi_final'|'quarter_final'>('final')
-  const [breakMinutes, setBreak]    = useState(25)
+  const [breakMinutes, setBreak]    = useState(10)
   const [startTime, setStartTime]   = useState('')
   const [numPools, setNumPools]     = useState(1)
 
@@ -406,7 +406,7 @@ export default function NewTournamentPage() {
                 <div className="flex flex-col gap-1">
                   <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Pauze tussen rondes (minuten)</label>
                   <Stepper value={breakMinutes} min={0} max={60} onChange={setBreak} />
-                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Wisseltijd / rust tussen rondes — standaard 25 min</p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Wisseltijd / rust tussen rondes — standaard 10 min</p>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Starttijd toernooi (optioneel)</label>

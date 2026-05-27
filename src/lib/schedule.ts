@@ -27,13 +27,31 @@ function buildPoolRounds(poolTeams: number[]): [number, number][][] {
 }
 
 /**
+ * Sort matches so teams that played most recently appear as LATE as possible.
+ * Priority: 0 tired teams < 1 tired team < 2 tired teams.
+ * This minimises consecutive-round appearances at algo-round boundaries.
+ */
+function restSort(matches: [number, number][], tired: Set<number>): [number, number][] {
+  if (tired.size === 0) return matches
+  return [...matches].sort((a, b) => {
+    const ca = (tired.has(a[0]) ? 1 : 0) + (tired.has(a[1]) ? 1 : 0)
+    const cb = (tired.has(b[0]) ? 1 : 0) + (tired.has(b[1]) ? 1 : 0)
+    return ca - cb
+  })
+}
+
+/**
  * Core scheduler.
  *
- * Single pool  → fills all available fields per time-slot (original behaviour).
+ * Single pool  → fills all available fields per time-slot.
+ *                Rest-aware: teams that played in the previous slot are pushed
+ *                to later slots within each algo-round.
+ *
  * Multi-pool   → each pool is assigned a dedicated field (pool p → field p % numFields).
  *                Pools play simultaneously, each on their own field.
  *                If more pools than fields, extra pools cycle back to field 0, 1, …
  *                and are queued sequentially behind the first pool on that field.
+ *                Rest-aware ordering is applied per field queue.
  */
 export function generateSchedule(
   numFields: number,
@@ -49,13 +67,17 @@ export function generateSchedule(
 
   // ── Single pool: fill all fields per time-slot ───────────────────────────
   if (numPools === 1) {
+    let tired = new Set<number>()
     for (let algoRound = 0; algoRound < maxAlgoRounds; algoRound++) {
-      const combined = poolRoundLists[0][algoRound]
-      for (let i = 0; i < combined.length; i += numFields) {
-        const chunk = combined.slice(i, i + numFields)
+      // Reorder: push teams that just played to later positions
+      const matches = restSort(poolRoundLists[0][algoRound], tired)
+      for (let i = 0; i < matches.length; i += numFields) {
+        const chunk = matches.slice(i, i + numFields)
         chunk.forEach(([home, away], fieldIdx) => {
           slots.push({ homeTeamIndex: home, awayTeamIndex: away, round: globalRound, fieldIndex: fieldIdx, matchNumber: matchNumber++ })
         })
+        // Teams in this slot are now "tired" for the next slot
+        tired = new Set(chunk.flatMap(([h, a]) => [h, a]))
         globalRound++
       }
     }
@@ -63,9 +85,11 @@ export function generateSchedule(
   }
 
   // ── Multi-pool: dedicated field per pool (pool p → field p % numFields) ──
+  // Track per-field tired teams for rest-aware ordering within each field queue
+  const tiredByField = new Map<number, Set<number>>()
+
   for (let algoRound = 0; algoRound < maxAlgoRounds; algoRound++) {
-    // Build a queue of matches per field for this algo-round.
-    // Pools sharing a field are concatenated (played sequentially on that field).
+    // Collect matches per field for this algo-round
     const fieldQueues = new Map<number, [number, number][]>()
     poolRoundLists.forEach((poolRounds, p) => {
       if (algoRound >= poolRounds.length) return
@@ -73,6 +97,12 @@ export function generateSchedule(
       if (!fieldQueues.has(f)) fieldQueues.set(f, [])
       fieldQueues.get(f)!.push(...poolRounds[algoRound])
     })
+
+    // Apply rest-aware ordering to each field's queue
+    for (const [f, queue] of fieldQueues) {
+      const tired = tiredByField.get(f) ?? new Set<number>()
+      fieldQueues.set(f, restSort(queue, tired))
+    }
 
     // Number of time-slots = longest queue across all fields
     const maxQueueLen = Math.max(...Array.from(fieldQueues.values()).map(q => q.length), 0)
@@ -85,6 +115,8 @@ export function generateSchedule(
         const [home, away] = match
         slots.push({ homeTeamIndex: home, awayTeamIndex: away, round: globalRound, fieldIndex: fieldIdx, matchNumber: matchNumber++ })
         hasMatches = true
+        // Update tired teams for this field
+        tiredByField.set(fieldIdx, new Set([home, away]))
       })
       if (hasMatches) globalRound++
     }
