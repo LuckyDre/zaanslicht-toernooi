@@ -84,38 +84,24 @@ function sortStanding(a: Standing, b: Standing) {
   return b.goals_for - a.goals_for
 }
 
-/** Return the top-2 team IDs from each pool (winners + runner-ups) */
-function getPoolTop2(standings: Standing[], numPools: number): { winners: string[]; runnerUps: string[] } {
-  const winners: string[] = []
-  const runnerUps: string[] = []
-  for (let p = 0; p < numPools; p++) {
-    const sorted = standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)
-    if (sorted[0]) winners.push(sorted[0].team_id)
-    if (sorted[1]) runnerUps.push(sorted[1].team_id)
-  }
-  return { winners, runnerUps }
-}
-
 /**
- * Cross-rank finale: #1 from pool X plays #2 from every other pool.
- * P pools → P*(P-1) matches in P-1 rounds of P simultaneous matches.
- * Round r, pool p: winners[p] vs runnerUps[(p + r + 1) % P]
- *
- * Example (P=3):
- *   Round 1: A1vsB2, B1vsC2, C1vsA2
- *   Round 2: A1vsC2, B1vsA2, C1vsB2
+ * Get top N finalists from multi-pool standings.
+ * Fills first with all pool #1s (sorted by performance), then best #2s, etc.
+ * Example (3 pools, count=4): winner A, winner B, winner C, best runner-up
  */
-function generateCrossRankFinale(winners: string[], runnerUps: string[]): [string, string][][] {
-  const P = winners.length
-  const rounds: [string, string][][] = []
-  for (let r = 0; r < P - 1; r++) {
-    const round: [string, string][] = []
-    for (let p = 0; p < P; p++) {
-      round.push([winners[p], runnerUps[(p + r + 1) % P]])
+function getMultiPoolFinalists(standings: Standing[], numPools: number, count: number): string[] {
+  const result: string[] = []
+  for (let rank = 0; result.length < count; rank++) {
+    const atRank: Standing[] = []
+    for (let p = 0; p < numPools; p++) {
+      const poolStandings = standings.filter(s => (s.pool ?? 1) === p + 1).sort(sortStanding)
+      if (poolStandings[rank]) atRank.push(poolStandings[rank])
     }
-    rounds.push(round)
+    if (atRank.length === 0) break
+    const sorted = [...atRank].sort(sortStanding)
+    result.push(...sorted.slice(0, count - result.length).map(s => s.team_id))
   }
-  return rounds
+  return result
 }
 
 /** For single-pool knockout: standard bracket seedings */
@@ -491,30 +477,28 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       let roundNum = maxKORound + 1
 
       if (isMultiPool) {
-        // ── Multi-pool: cross-rank finale ──────────────────────────────────
-        // #1 from each pool plays #2 from every other pool.
-        // P pools → P*(P-1) matches in (P-1) rounds of P simultaneous matches.
-        const { winners, runnerUps } = getPoolTop2(currentStandings, tournament.num_pools)
-        if (winners.length < 2 || runnerUps.length < 2) {
-          alert('Niet genoeg teams gevonden (nummer 1 én 2 per poel nodig). Zijn alle groepswedstrijden afgerond?')
+        // ── Multi-pool: proper knockout bracket ────────────────────────────
+        // Top N teams across pools (all #1s sorted, then best #2, etc.)
+        const count = FINALS_COUNT[tournament.finals_type] ?? 4
+        const finalists = getMultiPoolFinalists(currentStandings, tournament.num_pools, count)
+        if (finalists.length < 2) {
+          alert('Niet genoeg teams gevonden. Zijn alle groepswedstrijden afgerond?')
           setGeneratingKO(false); return
         }
-        const rounds = generateCrossRankFinale(winners, runnerUps)
-        for (const roundMatches of rounds) {
-          for (let i = 0; i < roundMatches.length; i += numFields) {
-            const chunk = roundMatches.slice(i, i + numFields)
-            chunk.forEach(([home, away], fi) => {
-              insertRows.push({
-                tournament_id: tournament.id,
-                home_team_id: home, away_team_id: away,
-                round: roundNum, match_number: mn++,
-                phase: 'final' as const,
-                status: 'scheduled' as const,
-                field_id: fields[fi % fields.length]?.id ?? null,
-              })
+        const matchups = seedsToMatchups(finalists)
+        const phase: Match['phase'] = count <= 2 ? 'final' : count <= 4 ? 'semi_final' : 'quarter_final'
+        for (let i = 0; i < matchups.length; i += numFields) {
+          const chunk = matchups.slice(i, i + numFields)
+          chunk.forEach(([home, away], fi) => {
+            insertRows.push({
+              tournament_id: tournament.id,
+              home_team_id: home, away_team_id: away,
+              round: roundNum, match_number: mn++,
+              phase, status: 'scheduled' as const,
+              field_id: fields[fi % fields.length]?.id ?? null,
             })
-            roundNum++
-          }
+          })
+          roundNum++
         }
 
       } else {
@@ -650,42 +634,17 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const allMatchesDone = matches.length > 0 && matches.every(m => m.status === 'finished' || m.status === 'cancelled')
   const tournamentWinner = useMemo((): { name: string; color: string } | null => {
     if (!allMatchesDone || koMatches.length === 0) return null
-    if (isMultiPool) {
-      // Multi-pool: compute finale ranking, take #1
-      const finaleMs = matches.filter(m => m.phase !== 'group')
-      if (finaleMs.length === 0) return null
-      // Inline mini-league computation (mirrors BracketOverlay logic)
-      const stats: Record<string, { name: string; color: string; pts: number; gf: number; ga: number }> = {}
-      for (const m of finaleMs) {
-        if (m.status !== 'finished' || m.home_score === null || m.away_score === null) continue
-        const hid = m.home_team_id, aid = m.away_team_id
-        if (!stats[hid]) stats[hid] = { name: m.home_team?.name ?? '?', color: m.home_team?.color ?? '#f59e0b', pts: 0, gf: 0, ga: 0 }
-        if (!stats[aid]) stats[aid] = { name: m.away_team?.name ?? '?', color: m.away_team?.color ?? '#f59e0b', pts: 0, gf: 0, ga: 0 }
-        const hs = m.home_score, as_ = m.away_score
-        stats[hid].gf += hs; stats[hid].ga += as_
-        stats[aid].gf += as_; stats[aid].ga += hs
-        if (hs > as_) { stats[hid].pts += 3 }
-        else if (hs < as_) { stats[aid].pts += 3 }
-        else { stats[hid].pts++; stats[aid].pts++ }
-      }
-      const sorted = Object.values(stats).sort((a, b) => {
-        if (b.pts !== a.pts) return b.pts - a.pts
-        return (b.gf - b.ga) - (a.gf - a.ga)
-      })
-      return sorted[0] ?? null
-    } else {
-      // Single-pool: winner of the final match
-      const finalMatch = koMatches.find(m => m.phase === 'final' && m.status === 'finished')
-      if (!finalMatch) return null
-      const winnerTeam = (finalMatch.home_score ?? 0) >= (finalMatch.away_score ?? 0)
-        ? finalMatch.home_team : finalMatch.away_team
-      return winnerTeam ? { name: winnerTeam.name, color: winnerTeam.color ?? '#f59e0b' } : null
-    }
-  }, [allMatchesDone, koMatches, isMultiPool, matches])
+    // Both single- and multi-pool now use proper knockout → look at the final match
+    const finalMatch = koMatches.find(m => m.phase === 'final' && m.status === 'finished')
+    if (!finalMatch) return null
+    const winnerTeam = (finalMatch.home_score ?? 0) >= (finalMatch.away_score ?? 0)
+      ? finalMatch.home_team : finalMatch.away_team
+    return winnerTeam ? { name: winnerTeam.name, color: winnerTeam.color ?? '#f59e0b' } : null
+  }, [allMatchesDone, koMatches])
 
   const canGenerateFirst = !!tournament && tournament.finals_type !== 'none' && allGroupDone && koMatches.length === 0
-  // Next-round button only makes sense for single-pool knockout; multi-pool finale poule is one shot
-  const canGenerateNext  = !isMultiPool && !!latestKOPhase && allLatestKODone
+  // Next-round button: single- and multi-pool both use proper knockout now
+  const canGenerateNext  = !!latestKOPhase && allLatestKODone
     && latestKOPhase !== 'final' && latestKOPhase !== 'third_place'
     && !(latestKOPhase === 'semi_final' && koMatches.some(m => m.phase === 'final'))
     && !(latestKOPhase === 'quarter_final' && koMatches.some(m => m.phase === 'semi_final'))
@@ -694,10 +653,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const generateButtonLabel = (() => {
     if (canGenerateFirst) {
       if (isMultiPool) {
-        const P = tournament!.num_pools
-        const totalMatches = P * (P - 1)
-        const rounds = P - 1
-        return `🏆 Genereer finale poule (${P} × 2 teams, ${totalMatches} wedstrijden in ${rounds} rondes)`
+        const count = FINALS_COUNT[tournament!.finals_type] ?? 4
+        const sfCount = count / 2
+        return `🏆 Genereer halve finales (${count} teams · ${sfCount} wedstrijd${sfCount !== 1 ? 'en' : ''})`
       }
       return `🏆 Genereer finales (${KO_LABEL[FINALS_PHASE[tournament?.finals_type ?? ''] ?? 'final'] ?? 'Finale'})`
     }
