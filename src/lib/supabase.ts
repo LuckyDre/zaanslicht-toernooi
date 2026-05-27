@@ -17,6 +17,8 @@ export type Tournament = {
   finals_type: 'none' | 'final' | 'semi_final' | 'quarter_final'
   num_pools: number
   pool_names: string[] | null
+  break_minutes: number
+  starts_at: string | null
   status: 'draft' | 'active' | 'finished'
   created_at: string
   updated_at: string

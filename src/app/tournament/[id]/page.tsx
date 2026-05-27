@@ -3,6 +3,19 @@
 import { useEffect, useState, use } from 'react'
 import Link from 'next/link'
 import { supabase, Tournament, Match, Standing } from '@/lib/supabase'
+
+/** Bereken verwachte starttijd per ronde-nummer */
+function buildRoundTimeMap(matches: Match[], tournament: Tournament | null): Record<number, string> {
+  if (!tournament?.starts_at) return {}
+  const rounds = [...new Set(matches.map(m => m.round))].sort((a, b) => a - b)
+  const perRound = (tournament.match_duration_minutes + (tournament.break_minutes ?? 25)) * 60_000
+  const map: Record<number, string> = {}
+  rounds.forEach((rn, idx) => {
+    map[rn] = new Date(new Date(tournament.starts_at!).getTime() + idx * perRound)
+      .toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })
+  })
+  return map
+}
 import { Navbar } from '@/components/ui/Navbar'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -102,9 +115,11 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
     }
   }
 
-  const liveMatches = matches.filter(m => m.status === 'live')
-  const finishedMatches = matches.filter(m => m.status === 'finished')
+  const liveMatches      = matches.filter(m => m.status === 'live')
+  const finishedMatches  = matches.filter(m => m.status === 'finished')
   const scheduledMatches = matches.filter(m => m.status === 'scheduled')
+  const roundTimeMap     = buildRoundTimeMap(matches, tournament)
+  const matchMinutes     = tournament?.match_duration_minutes ?? 10
 
   if (loading) {
     return (
@@ -276,7 +291,7 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
                 {live.length > 0 && (
                   <div className="flex flex-col gap-3">
                     <SectionHeader color="var(--green)" label="Live" />
-                    {live.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                    {live.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                   </div>
                 )}
                 {numPools > 1
@@ -286,13 +301,13 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
                       return (
                         <div key={p} className="flex flex-col gap-3">
                           <SectionHeader color={pool_colors[p] ?? '#FF6B00'} label={poolLabel(p)} />
-                          {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                          {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                         </div>
                       )
                     })
                   : doneGroup.length > 0 && (
                       <div className="flex flex-col gap-3">
-                        {doneGroup.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                        {doneGroup.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                       </div>
                     )}
                 {KNOCKOUT_PHASES.map(phase => {
@@ -301,7 +316,7 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
                   return (
                     <div key={phase} className="flex flex-col gap-3">
                       <SectionHeader color="var(--orange)" label={`🏆 ${PHASE_LABELS[phase]}`} />
-                      {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                      {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                     </div>
                   )
                 })}
@@ -329,13 +344,13 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
                     return (
                       <div key={p} className="flex flex-col gap-3">
                         <SectionHeader color={pool_colors[p] ?? '#FF6B00'} label={poolLabel(p)} />
-                        {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                        {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                       </div>
                     )
                   })
                 : schedGroup.length > 0 && (
                     <div className="flex flex-col gap-3">
-                      {schedGroup.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                      {schedGroup.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                     </div>
                   )}
               {KNOCKOUT_PHASES.map(phase => {
@@ -344,7 +359,7 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
                 return (
                   <div key={phase} className="flex flex-col gap-3">
                     <SectionHeader color="var(--orange)" label={`🏆 ${PHASE_LABELS[phase]}`} />
-                    {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} />)}
+                    {pm.map(m => <MatchCard key={m.id} match={m} tournamentId={id} expectedTime={roundTimeMap[m.round]} matchMinutes={matchMinutes} />)}
                   </div>
                 )
               })}

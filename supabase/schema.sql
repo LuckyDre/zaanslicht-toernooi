@@ -13,6 +13,8 @@ create table if not exists tournaments (
   finals_type text not null default 'none' check (finals_type in ('none','final','semi_final','quarter_final')),
   num_pools int not null default 1,
   pool_names text[],
+  break_minutes int not null default 25,
+  starts_at timestamptz,
   status text not null default 'draft' check (status in ('draft','active','finished')),
   created_at timestamptz default now(),
   updated_at timestamptz default now()

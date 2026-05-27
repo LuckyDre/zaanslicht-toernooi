@@ -1,12 +1,46 @@
 'use client'
 
-import { useEffect, useState, useMemo, use } from 'react'
+import { useEffect, useState, useMemo, use, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, Match, Tournament, Standing, Field } from '@/lib/supabase'
 import { Navbar } from '@/components/ui/Navbar'
 import { Button } from '@/components/ui/Button'
 import { BracketOverlay } from '@/components/admin/BracketOverlay'
+
+// ── Elapsed timer ─────────────────────────────────────────────────────────────
+function ElapsedTimer({ startedAt, matchMinutes }: { startedAt: string; matchMinutes: number }) {
+  const calc = useCallback(() =>
+    Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
+  , [startedAt])
+  const [secs, setSecs] = useState(calc)
+  useEffect(() => {
+    const id = setInterval(() => setSecs(calc()), 1000)
+    return () => clearInterval(id)
+  }, [calc])
+  const overtime = secs > matchMinutes * 60
+  const m = Math.floor(secs / 60), s = secs % 60
+  return (
+    <span className="font-mono text-xs font-bold tabular-nums"
+      style={{ color: overtime ? '#ef4444' : 'var(--orange)' }}>
+      {m}:{s.toString().padStart(2, '0')}{overtime ? ' ⚡' : ''}
+    </span>
+  )
+}
+
+// ── Round time helper ─────────────────────────────────────────────────────────
+function getRoundTime(
+  roundNum: number,
+  sortedRoundNums: number[],
+  tournament: Tournament
+): string | null {
+  if (!tournament.starts_at) return null
+  const idx = sortedRoundNums.indexOf(roundNum)
+  if (idx < 0) return null
+  const perRound = (tournament.match_duration_minutes + (tournament.break_minutes ?? 25)) * 60_000
+  return new Date(new Date(tournament.starts_at).getTime() + idx * perRound)
+    .toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })
+}
 
 type MS = { homeScore: number; awayScore: number; saving: boolean; saved: boolean; error: string | null }
 type RS = 'scheduled' | 'live' | 'finished'
@@ -108,19 +142,21 @@ function getLoser(m: Match): string {
 }
 
 // ─── Round navigator pill ────────────────────────────────────────────────────
-function RoundPill({ n, label, status, selected, onClick }: {
-  n: number; label?: string; status: RS; selected: boolean; onClick: () => void
+function RoundPill({ n, label, time, status, selected, onClick }: {
+  n: number; label?: string; time?: string | null; status: RS; selected: boolean; onClick: () => void
 }) {
   const bg     = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e20' : status === 'live' ? '#FF6B0025' : 'var(--bg-card)'
   const border = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e60' : status === 'live' ? 'var(--orange)' : 'var(--border)'
   const txtCol = selected ? '#fff' : 'var(--text-primary)'
+  const subCol = selected ? 'rgba(255,255,255,.75)' : 'var(--text-secondary)'
+  const dotCol = selected ? 'rgba(255,255,255,.85)' : status === 'finished' ? '#22c55e' : status === 'live' ? 'var(--orange)' : 'var(--border)'
   return (
     <button onClick={onClick}
-      className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl cursor-pointer active:scale-95 transition-transform"
-      style={{ width: 48, height: 48, backgroundColor: bg, border: `2px solid ${border}`, color: txtCol }}>
-      <span className="font-bold text-sm leading-none">{label ?? n}</span>
-      <span className="text-[10px] leading-none mt-0.5"
-        style={{ color: selected ? 'rgba(255,255,255,.8)' : status === 'finished' ? '#22c55e' : status === 'live' ? 'var(--orange)' : 'var(--border)' }}>
+      className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl cursor-pointer active:scale-95 transition-transform gap-0.5"
+      style={{ width: 62, minHeight: 56, padding: '6px 4px', backgroundColor: bg, border: `2px solid ${border}`, color: txtCol }}>
+      <span className="font-bold text-sm leading-none">{label ?? `R${n}`}</span>
+      {time && <span className="text-[9px] leading-none font-semibold" style={{ color: subCol }}>{time}</span>}
+      <span className="text-[10px] leading-none" style={{ color: dotCol }}>
         {status === 'finished' ? '✓' : status === 'live' ? '●' : '·'}
       </span>
     </button>
@@ -129,9 +165,9 @@ function RoundPill({ n, label, status, selected, onClick }: {
 
 // ─── Match card ──────────────────────────────────────────────────────────────
 function MatchCard({
-  match, s, onUpd, onSaveScore, onSave,
+  match, s, matchMinutes, expectedTime, onUpd, onSaveScore, onSave,
 }: {
-  match: Match; s: MS
+  match: Match; s: MS; matchMinutes: number; expectedTime?: string | null
   onUpd: (p: Partial<MS>) => void
   onSaveScore: () => void
   onSave: (status: Match['status']) => void
@@ -151,10 +187,20 @@ function MatchCard({
     <div className="rounded-2xl overflow-hidden" style={{ border: `1.5px solid ${borderColor}`, backgroundColor: bgColor }}>
       <div className="flex items-center justify-between px-4 py-2.5"
         style={{ backgroundColor: headBg, borderBottom: `1px solid ${borderColor}` }}>
-        <span className="font-bold text-sm">{match.field?.name ?? `Wedstrijd ${match.match_number}`}</span>
-        <div className="flex items-center gap-2">
-          {s.saved  && <span className="text-xs font-medium" style={{ color: '#22c55e' }}>✓ Opgeslagen</span>}
-          {s.error  && <span className="text-xs" style={{ color: '#ef4444' }}>⚠ {s.error}</span>}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-bold text-sm truncate">{match.field?.name ?? `Wedstrijd ${match.match_number}`}</span>
+          {!isLive && !isDone && expectedTime && (
+            <span className="text-xs font-semibold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
+              🕐 {expectedTime}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {isLive && match.started_at && (
+            <ElapsedTimer startedAt={match.started_at} matchMinutes={matchMinutes} />
+          )}
+          {s.saved  && <span className="text-xs font-medium" style={{ color: '#22c55e' }}>✓</span>}
+          {s.error  && <span className="text-xs" style={{ color: '#ef4444' }}>⚠</span>}
           <span className="text-xs font-bold" style={{ color: statusColor }}>{statusLabel}</span>
         </div>
       </div>
@@ -275,6 +321,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [stopAllSaving, setStopAllSaving] = useState(false)
   const [generatingKO, setGeneratingKO]   = useState(false)
   const [showBracket, setShowBracket]     = useState(false)
+  const [showTimeline, setShowTimeline]   = useState(false)
+  const [editStartTime, setEditStartTime] = useState('')
+  const [savingTime, setSavingTime]       = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -574,6 +623,29 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
   const isMultiPool = (tournament?.num_pools ?? 1) > 1
 
+  // ── Tijdplanning ─────────────────────────────────────────────────────────────
+  const sortedRoundNums = useMemo(() => rounds.map(r => r.round), [rounds])
+
+  const roundTimeMap = useMemo((): Record<number, string | null> => {
+    const map: Record<number, string | null> = {}
+    if (!tournament?.starts_at) { sortedRoundNums.forEach(rn => { map[rn] = null }); return map }
+    const perRound = (tournament.match_duration_minutes + (tournament.break_minutes ?? 25)) * 60_000
+    sortedRoundNums.forEach((rn, idx) => {
+      map[rn] = new Date(new Date(tournament.starts_at!).getTime() + idx * perRound)
+        .toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })
+    })
+    return map
+  }, [sortedRoundNums, tournament])
+
+  const saveStartTime = async () => {
+    if (!tournament || !editStartTime) return
+    setSavingTime(true)
+    const iso = new Date(`${new Date().toDateString()} ${editStartTime}`).toISOString()
+    await supabase.from('tournaments').update({ starts_at: iso }).eq('id', tournament.id)
+    setTournament(prev => prev ? { ...prev, starts_at: iso } : prev)
+    setSavingTime(false); setEditStartTime('')
+  }
+
   // ── Compute tournament winner for winner banner ─────────────────────────────
   const allMatchesDone = matches.length > 0 && matches.every(m => m.status === 'finished' || m.status === 'cancelled')
   const tournamentWinner = useMemo((): { name: string; color: string } | null => {
@@ -692,6 +764,116 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             )}
           </div>
 
+          {/* ── Tijdschema sectie ── */}
+          <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+            {/* Header — klik om uit te klappen */}
+            <button
+              onClick={() => setShowTimeline(t => !t)}
+              className="w-full flex items-center justify-between px-4 py-3 cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-card)' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold">📅 Tijdschema</span>
+                {tournament?.starts_at
+                  ? <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#22c55e20', color: '#22c55e' }}>
+                      start {new Date(tournament.starts_at).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  : <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>geen starttijd ingesteld</span>
+                }
+              </div>
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{showTimeline ? '▲' : '▼'}</span>
+            </button>
+
+            {showTimeline && (
+              <div style={{ borderTop: '1px solid var(--border)' }}>
+                {/* Starttijd instellen */}
+                <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
+                  <span className="text-xs font-semibold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>Starttijd:</span>
+                  <input type="time" value={editStartTime || (tournament?.starts_at ? new Date(tournament.starts_at).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : '')}
+                    onChange={e => setEditStartTime(e.target.value)}
+                    className="rounded-lg px-2 py-1 text-xs outline-none"
+                    style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', width: 90 }} />
+                  {editStartTime && (
+                    <button onClick={saveStartTime} disabled={savingTime}
+                      className="text-xs font-bold px-3 py-1 rounded-lg cursor-pointer"
+                      style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>
+                      {savingTime ? '…' : 'Opslaan'}
+                    </button>
+                  )}
+                  {tournament && (
+                    <span className="text-xs ml-auto" style={{ color: 'var(--text-secondary)' }}>
+                      pauze: {tournament.break_minutes ?? 25} min
+                    </span>
+                  )}
+                </div>
+
+                {/* Ronde-lijst */}
+                {rounds.map(({ round, matches: rm }, idx) => {
+                  const isKO = rm.some(m => m.phase !== 'group')
+                  const prevIsGroup = idx > 0 && rounds[idx - 1].matches.every(m => m.phase === 'group')
+                  const isFirstKO   = isKO && prevIsGroup
+                  const st = getRoundStatus(rm)
+                  const time = roundTimeMap[round]
+                  const label = getRoundPillLabel(rm)
+                  return (
+                    <div key={round}>
+                      {isFirstKO && (
+                        <div className="px-4 py-1.5 text-xs font-bold uppercase tracking-wider"
+                          style={{ backgroundColor: '#FF6B0010', color: 'var(--orange)', borderTop: '1px solid var(--border)' }}>
+                          🏆 Finale rondes
+                        </div>
+                      )}
+                      <div
+                        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer"
+                        style={{
+                          borderTop: isFirstKO ? 'none' : '1px solid var(--border)',
+                          backgroundColor: round === selectedRound ? '#FF6B000A' : 'transparent',
+                        }}
+                        onClick={() => setSelectedRound(round)}>
+                        {/* Status dot */}
+                        <span className="text-sm w-4 text-center flex-shrink-0"
+                          style={{ color: st === 'finished' ? '#22c55e' : st === 'live' ? 'var(--orange)' : 'var(--text-secondary)' }}>
+                          {st === 'finished' ? '✓' : st === 'live' ? '●' : '○'}
+                        </span>
+                        {/* Tijd */}
+                        <span className="text-sm font-bold tabular-nums w-12 flex-shrink-0"
+                          style={{ color: time ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                          {time ?? '—:——'}
+                        </span>
+                        {/* Label */}
+                        <span className="flex-1 text-sm">
+                          {label ? (KO_LABEL[rm[0]?.phase] ?? `Ronde ${round}`) : `Ronde ${round}`}
+                        </span>
+                        {/* Wedstrijden */}
+                        <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                          {rm.filter(m => m.status !== 'cancelled').length} wedstrijd{rm.length !== 1 ? 'en' : ''}
+                        </span>
+                        {round === selectedRound && (
+                          <span className="text-xs font-bold flex-shrink-0" style={{ color: 'var(--orange)' }}>◀</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Eindtijd schatting */}
+                {tournament?.starts_at && rounds.length > 0 && (() => {
+                  const lastTime = roundTimeMap[rounds[rounds.length - 1].round]
+                  if (!lastTime) return null
+                  const endMs = new Date(tournament.starts_at).getTime() +
+                    (rounds.length - 1) * (tournament.match_duration_minutes + (tournament.break_minutes ?? 25)) * 60_000 +
+                    tournament.match_duration_minutes * 60_000
+                  const endStr = new Date(endMs).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })
+                  return (
+                    <div className="px-4 py-2.5 flex items-center justify-between" style={{ borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
+                      <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Verwachte eindtijd</span>
+                      <span className="text-sm font-bold">~{endStr}</span>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
+
           {/* ── Tournament winner banner ── */}
           {tournamentWinner && (
             <div className="rounded-2xl p-5 text-center mb-5"
@@ -719,18 +901,34 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           )}
 
           {/* ── Round navigator ── */}
-          <div className="mb-1">
-            <p className="text-xs mb-2 font-semibold" style={{ color: 'var(--text-secondary)' }}>RONDES</p>
-          </div>
-          <div className="overflow-x-auto -mx-4 px-4 pb-1 mb-5">
-            <div className="flex gap-2" style={{ width: 'max-content' }}>
-              {rounds.map(({ round, matches: rm }) => (
-                <RoundPill key={round} n={round}
-                  label={getRoundPillLabel(rm)}
-                  status={getRoundStatus(rm)}
-                  selected={round === selectedRound}
-                  onClick={() => setSelectedRound(round)} />
-              ))}
+          <div className="overflow-x-auto -mx-4 px-4 pb-2 mb-4">
+            <div className="flex items-end gap-1.5" style={{ width: 'max-content' }}>
+              {rounds.map(({ round, matches: rm }, idx) => {
+                const isKO       = rm.some(m => m.phase !== 'group')
+                const prevGroup  = idx > 0 && rounds[idx - 1].matches.every(m => m.phase === 'group')
+                const isFirstKO  = isKO && (idx === 0 || prevGroup)
+                return (
+                  <div key={round} className="flex items-end gap-1.5">
+                    {/* Fase-scheiding: verticale lijn + label */}
+                    {isFirstKO && (
+                      <div className="flex flex-col items-center self-stretch justify-end pb-1 px-1">
+                        <span className="text-[9px] font-bold uppercase mb-1" style={{ color: 'var(--orange)', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
+                          Finales
+                        </span>
+                        <div className="w-0.5 flex-1 rounded-full" style={{ backgroundColor: 'var(--orange)', opacity: 0.5, minHeight: 28 }} />
+                      </div>
+                    )}
+                    <RoundPill
+                      n={round}
+                      label={getRoundPillLabel(rm) ?? undefined}
+                      time={roundTimeMap[round]}
+                      status={getRoundStatus(rm)}
+                      selected={round === selectedRound}
+                      onClick={() => setSelectedRound(round)}
+                    />
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -778,6 +976,8 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                 if (!s) return null
                 return (
                   <MatchCard key={match.id} match={match} s={s}
+                    matchMinutes={tournament?.match_duration_minutes ?? 10}
+                    expectedTime={roundTimeMap[match.round ?? 0]}
                     onUpd={p => upd(match.id, p)}
                     onSaveScore={() => saveScore(match)}
                     onSave={status => saveMatch(match, status)}

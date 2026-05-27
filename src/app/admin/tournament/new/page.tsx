@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
 // ── Advies engine ─────────────────────────────────────────────────────────────
-function getAdvice(numTeams: number, numFields: number, matchMinutes: number, numHalves: 1 | 2) {
+function getAdvice(numTeams: number, numFields: number, matchMinutes: number, numHalves: 1 | 2, breakMinutes: number) {
   // Zoek de beste poule-indeling (1–4 poules)
   // Scoreer elke optie: poules van 4 teams = ideaal, gelijke grootte = bonus
   let suggestedPools = 1
@@ -80,10 +80,13 @@ function getAdvice(numTeams: number, numFields: number, matchMinutes: number, nu
   const { rounds } = previewSchedule(numTeams, numFields, suggestedPools)
   const FINALE_ROUNDS: Record<string, number> = { none: 0, final: 1, semi_final: 2, quarter_final: 3 }
   const finaleRounds = FINALE_ROUNDS[suggestedFinale] ?? 0
-  const totalMin = (rounds + finaleRounds) * matchMinutes * numHalves
+  const totalRounds = rounds + finaleRounds
+  const speelMin = totalRounds * matchMinutes * numHalves
+  const pauzeMin = Math.max(0, totalRounds - 1) * breakMinutes
+  const totalMin = speelMin + pauzeMin
   const h = Math.floor(totalMin / 60), m = totalMin % 60
   const durStr = h > 0 ? `${h} uur${m > 0 ? ` ${m} min` : ''}` : `${m} minuten`
-  items.push({ icon: '⏱', text: `Geschatte speeltijd: ca. ${durStr} (excl. pauzes en wisseltijden)`, warn: false })
+  items.push({ icon: '⏱', text: `Geschatte toernooiduur: ca. ${durStr} (${totalRounds} rondes × ${matchMinutes * numHalves} min + ${totalRounds - 1} pauzes × ${breakMinutes} min)`, warn: false })
 
   return { suggestedPools, suggestedFinale, items }
 }
@@ -135,6 +138,8 @@ export default function NewTournamentPage() {
   const [numHalves, setHalves]      = useState<1|2>(1)
   const [totalMinutes, setTotal]    = useState('')
   const [finalsType, setFinals]     = useState<'none'|'final'|'semi_final'|'quarter_final'>('final')
+  const [breakMinutes, setBreak]    = useState(25)
+  const [startTime, setStartTime]   = useState('')
   const [numPools, setNumPools]     = useState(1)
 
   // ── Step 2: team names, colors + pool assignment ─────────────────────────
@@ -145,7 +150,7 @@ export default function NewTournamentPage() {
 
   // ── Preview calculations (live, no side-effects) ─────────────────────────
   const preview = useMemo(() => previewSchedule(numTeams, numFields, numPools), [numTeams, numFields, numPools])
-  const advice  = useMemo(() => getAdvice(numTeams, numFields, matchMinutes, numHalves), [numTeams, numFields, matchMinutes, numHalves])
+  const advice  = useMemo(() => getAdvice(numTeams, numFields, matchMinutes, numHalves, breakMinutes), [numTeams, numFields, matchMinutes, numHalves, breakMinutes])
 
   // Go to step 2: initialise team names, colors + evenly distribute pools
   const handleStep1 = () => {
@@ -174,6 +179,10 @@ export default function NewTournamentPage() {
         total_duration_minutes: totalMinutes ? parseInt(totalMinutes) : null,
         finals_type: finalsType,
         num_pools: numPools,
+        break_minutes: breakMinutes,
+        starts_at: startTime
+          ? new Date(`${new Date().toDateString()} ${startTime}`).toISOString()
+          : null,
         status: 'draft' as const,
       }
 
@@ -394,9 +403,18 @@ export default function NewTournamentPage() {
                     </button>
                   ))}
                 </div>
-                <Input label="Totale toernooiduur (optioneel, minuten)" type="number"
-                  value={totalMinutes} onChange={e => setTotal(e.target.value)}
-                  placeholder={`Schatting: ~${preview.rounds * matchMinutes * numHalves} min`} min="1" />
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Pauze tussen rondes (minuten)</label>
+                  <Stepper value={breakMinutes} min={0} max={60} onChange={setBreak} />
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Wisseltijd / rust tussen rondes — standaard 25 min</p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Starttijd toernooi (optioneel)</label>
+                  <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
+                    className="w-36 rounded-lg px-3 py-2 text-sm outline-none"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Wordt gebruikt voor het tijdschema per ronde</p>
+                </div>
               </div>
             </Card>
 
