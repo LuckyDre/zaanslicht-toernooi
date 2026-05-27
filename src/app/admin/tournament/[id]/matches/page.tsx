@@ -476,9 +476,10 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       let mn       = maxMatchNum + 1
       let roundNum = maxKORound + 1
 
-      if (isMultiPool) {
-        // ── Multi-pool: proper knockout bracket ────────────────────────────
-        // Top N teams across pools (all #1s sorted, then best #2, etc.)
+      if (isMultiPool && koMs.length === 0) {
+        // ── Multi-pool: seed INITIAL KO round from pool standings ──────────
+        // Only runs when no KO matches exist yet.
+        // After this, advancement uses the standard single-pool logic below.
         const count = FINALS_COUNT[tournament.finals_type] ?? 4
         const finalists = getMultiPoolFinalists(currentStandings, tournament.num_pools, count)
         if (finalists.length < 2) {
@@ -502,7 +503,8 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
         }
 
       } else {
-        // ── Single-pool: knockout bracket ──────────────────────────────────
+        // ── Single-pool initial KO  OR  any-pool KO advancement ───────────
+        // Multi-pool after the first KO round also uses this path.
         let matchups: [string, string][]
         let phase: Match['phase']
 
