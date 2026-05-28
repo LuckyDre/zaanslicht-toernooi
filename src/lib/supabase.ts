@@ -56,6 +56,7 @@ export type Match = {
   started_at: string | null
   finished_at: string | null
   status: 'scheduled' | 'live' | 'finished' | 'cancelled'
+  ref_token: string | null
   created_at: string
   home_team?: Team
   away_team?: Team

@@ -55,6 +55,7 @@ create table if not exists matches (
   started_at timestamptz,
   finished_at timestamptz,
   status text not null default 'scheduled' check (status in ('scheduled','live','finished','cancelled')),
+  ref_token uuid default gen_random_uuid(),
   created_at timestamptz default now()
 );
 
@@ -192,6 +193,8 @@ end;
 $$;
 
 -- Scheidsrechter past wedstrijduitslag aan (omzeilt RLS via SECURITY DEFINER)
+-- Valideert via het eigen ref_token van de wedstrijd.
+-- Scores kunnen alleen worden ingevoerd als de wedstrijd live is.
 create or replace function update_match_as_referee(
   p_match_id     uuid,
   p_ref_token    uuid,
@@ -203,22 +206,27 @@ create or replace function update_match_as_referee(
 )
 returns json language plpgsql security definer as $$
 declare
-  v_token uuid;
+  v_token  uuid;
+  v_status text;
 begin
-  -- Controleer token via tournament
-  select t.ref_token into v_token
-  from matches m join tournaments t on t.id = m.tournament_id
-  where m.id = p_match_id;
+  -- Haal het ref_token en de huidige status op voor dit specifieke duel
+  select ref_token, status into v_token, v_status
+  from matches
+  where id = p_match_id;
 
   if v_token is null or v_token != p_ref_token then
     return json_build_object('success', false, 'error', 'Ongeldige scheidsrechterscode');
+  end if;
+
+  -- Scores mogen alleen worden ingevoerd als de wedstrijd live is
+  if v_status != 'live' then
+    return json_build_object('success', false, 'error', 'Wedstrijd is nog niet gestart');
   end if;
 
   update matches set
     home_score  = p_home_score,
     away_score  = p_away_score,
     status      = p_status,
-    started_at  = case when p_started_at is not null then p_started_at else started_at end,
     finished_at = case
       when p_status = 'finished' then coalesce(p_finished_at, now())
       when p_status = 'live'     then null
@@ -232,3 +240,6 @@ $$;
 
 -- Migratie: voeg ref_token toe aan bestaande toernooien
 alter table tournaments add column if not exists ref_token uuid default gen_random_uuid();
+
+-- Migratie: voeg ref_token toe aan bestaande wedstrijden
+alter table matches add column if not exists ref_token uuid default gen_random_uuid();
