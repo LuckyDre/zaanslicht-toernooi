@@ -190,6 +190,7 @@ export default function RefPage({ params }: { params: Promise<{ id: string; toke
   const [allRounds, setAllRounds]     = useState<number[]>([])
   const [scores, setScores]           = useState<Record<string, SS>>({})
   const [thanksDismissed, setThanksDismissed] = useState(false)
+  const [groupPhaseDone, setGroupPhaseDone]   = useState(false)
 
   // Load referee + validate token
   useEffect(() => {
@@ -218,6 +219,16 @@ export default function RefPage({ params }: { params: Promise<{ id: string; toke
       })
   }, [refereeId, token])
 
+  // Check of alle groepswedstrijden in het toernooi klaar zijn
+  const checkGroupPhase = useCallback(async (tournamentId: string) => {
+    const { count } = await supabase.from('matches')
+      .select('id', { count: 'exact', head: true })
+      .eq('tournament_id', tournamentId)
+      .eq('phase', 'group')
+      .not('status', 'in', '(finished,cancelled)')
+    setGroupPhaseDone((count ?? 1) === 0)
+  }, [])
+
   // Load matches assigned to this referee
   const loadMatches = useCallback(async () => {
     const { data } = await supabase.from('matches')
@@ -243,15 +254,19 @@ export default function RefPage({ params }: { params: Promise<{ id: string; toke
   useEffect(() => {
     if (auth !== 'ok' || !referee) return
     loadMatches()
+    checkGroupPhase(referee.tournament_id)
     // Subscribe to all tournament matches (status changes + new assignments)
     const sub = supabase.channel(`ref-sched-${refereeId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'matches',
         filter: `tournament_id=eq.${referee.tournament_id}`,
-      }, loadMatches)
+      }, () => {
+        loadMatches()
+        checkGroupPhase(referee.tournament_id)
+      })
       .subscribe()
     return () => { supabase.removeChannel(sub) }
-  }, [auth, referee, refereeId, loadMatches])
+  }, [auth, referee, refereeId, loadMatches, checkGroupPhase])
 
   const upd = (matchId: string, p: Partial<SS>) =>
     setScores(prev => ({ ...prev, [matchId]: { ...prev[matchId], ...p } }))
@@ -316,12 +331,17 @@ export default function RefPage({ params }: { params: Promise<{ id: string; toke
 
   // ── Derive groups ─────────────────────────────────────────────────────────────
   const liveMatches      = matches.filter(m => m.status === 'live')
-  const scheduledMatches = matches.filter(m => m.status === 'scheduled')
   const finishedMatches  = matches.filter(m => m.status === 'finished')
-  const liveCount        = liveMatches.length
 
-  // Alle toegewezen wedstrijden zijn afgerond
-  const allDone = matches.length > 0 && liveMatches.length === 0 && scheduledMatches.length === 0
+  // KO-wedstrijden pas tonen nadat de groepsfase volledig is afgerond
+  const scheduledMatches = matches.filter(m =>
+    m.status === 'scheduled' && (m.phase === 'group' || groupPhaseDone)
+  )
+  const liveCount = liveMatches.length
+
+  // Alle toegewezen wedstrijden zijn afgerond (KO-wedstrijden tellen mee als groepsfase klaar is)
+  const pendingKO = !groupPhaseDone && matches.some(m => m.status === 'scheduled' && m.phase !== 'group')
+  const allDone   = matches.length > 0 && liveMatches.length === 0 && scheduledMatches.length === 0 && !pendingKO
 
   return (
     <div className="min-h-screen pb-12" style={{ backgroundColor: 'var(--bg-base)' }}>
