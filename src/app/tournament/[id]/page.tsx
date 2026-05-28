@@ -237,11 +237,11 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
             <div className="w-full max-w-xs rounded-3xl p-6 flex flex-col items-center gap-4"
               style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
               onClick={e => e.stopPropagation()}>
-              {/* Logo in overlay */}
-              {tournament.logo_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={tournament.logo_url} alt="Logo" className="h-12 w-auto object-contain" />
-              )}
+              {/* Logo in overlay (custom of Zaans Licht als fallback) */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={tournament.logo_url ?? '/zaanslicht-logo.jpg'} alt="Logo"
+                className="h-14 w-auto object-contain rounded-xl"
+                style={{ backgroundColor: 'white', padding: 6 }} />
               <div>
                 <p className="font-bold text-center text-base">{tournament.name}</p>
                 <p className="text-xs text-center mt-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -276,12 +276,15 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
           </Link>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
-              {/* Club logo */}
-              {tournament.logo_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={tournament.logo_url} alt="Logo" className="w-12 h-12 rounded-xl object-contain flex-shrink-0"
-                  style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', padding: 4 }} />
-              )}
+              {/* Club logo (custom of Zaans Licht als fallback) */}
+              {(() => {
+                const logoSrc = tournament.logo_url ?? '/zaanslicht-logo.jpg'
+                return (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={logoSrc} alt="Logo" className="w-12 h-12 rounded-xl object-contain flex-shrink-0"
+                    style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', padding: 4 }} />
+                )
+              })()}
               <div className="min-w-0">
                 <h1 className="text-2xl font-bold leading-tight">{tournament.name}</h1>
                 <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
