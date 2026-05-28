@@ -128,23 +128,30 @@ function getLoser(m: Match): string {
 }
 
 // ─── Round navigator pill ────────────────────────────────────────────────────
-function RoundPill({ n, label, time, status, selected, onClick }: {
-  n: number; label?: string; time?: string | null; status: RS; selected: boolean; onClick: () => void
+function RoundPill({ n, label, time, status, selected, refStatus, onClick }: {
+  n: number; label?: string; time?: string | null; status: RS; selected: boolean
+  refStatus: 'none' | 'partial' | 'full'; onClick: () => void
 }) {
   const bg     = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e20' : status === 'live' ? '#FF6B0025' : 'var(--bg-card)'
   const border = selected ? 'var(--orange)' : status === 'finished' ? '#22c55e60' : status === 'live' ? 'var(--orange)' : 'var(--border)'
   const txtCol = selected ? '#fff' : 'var(--text-primary)'
   const subCol = selected ? 'rgba(255,255,255,.75)' : 'var(--text-secondary)'
   const dotCol = selected ? 'rgba(255,255,255,.85)' : status === 'finished' ? '#22c55e' : status === 'live' ? 'var(--orange)' : 'var(--border)'
+  const refDot = refStatus === 'full' ? '#22c55e' : refStatus === 'partial' ? '#f59e0b' : 'transparent'
   return (
     <button onClick={onClick}
-      className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl cursor-pointer active:scale-95 transition-transform gap-0.5"
+      className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl cursor-pointer active:scale-95 transition-transform gap-0.5 relative"
       style={{ width: 62, minHeight: 56, padding: '6px 4px', backgroundColor: bg, border: `2px solid ${border}`, color: txtCol }}>
       <span className="font-bold text-sm leading-none">{label ?? `R${n}`}</span>
       {time && <span className="text-[9px] leading-none font-semibold" style={{ color: subCol }}>{time}</span>}
       <span className="text-[10px] leading-none" style={{ color: dotCol }}>
         {status === 'finished' ? '✓' : status === 'live' ? '●' : '·'}
       </span>
+      {/* Scheidsrechter-indicator: klein bolletje rechtsonder */}
+      {refStatus !== 'none' && (
+        <span className="absolute bottom-1 right-1.5 w-2 h-2 rounded-full"
+          style={{ backgroundColor: refDot }} />
+      )}
     </button>
   )
 }
@@ -1207,6 +1214,13 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                 const isKO       = rm.some(m => m.phase !== 'group')
                 const prevGroup  = idx > 0 && rounds[idx - 1].matches.every(m => m.phase === 'group')
                 const isFirstKO  = isKO && (idx === 0 || prevGroup)
+                const active     = rm.filter(m => m.status !== 'cancelled')
+                const withRef    = active.filter(m => m.referee_id !== null).length
+                const refStatus: 'none' | 'partial' | 'full' =
+                  active.length === 0 ? 'none'
+                  : withRef === active.length ? 'full'
+                  : withRef > 0 ? 'partial'
+                  : 'none'
                 return (
                   <div key={round} className="flex items-end gap-1.5">
                     {/* Fase-scheiding: verticale lijn + label */}
@@ -1223,6 +1237,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                       label={getRoundPillLabel(rm) ?? undefined}
                       time={roundTimeMap[round]}
                       status={getRoundStatus(rm)}
+                      refStatus={refStatus}
                       selected={round === selectedRound}
                       onClick={() => setSelectedRound(round)}
                     />
@@ -1245,6 +1260,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
               const latestEnd     = endTimes.length === activeMs.length && endTimes.length > 0
                 ? fmtTime(endTimes.reduce((a, b) => a > b ? a : b))
                 : null
+              const withRef    = activeMs.filter(m => m.referee_id !== null).length
+              const refComplete = activeMs.length > 0 && withRef === activeMs.length
+              const refPartial  = withRef > 0 && !refComplete
               return (
                 <div className="mb-4">
                   <div className="flex items-start justify-between">
@@ -1266,6 +1284,17 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                           ? `Alle ${activeMs.length} wedstrijden gespeeld`
                           : `${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''} staan klaar`}
                       </p>
+                      {/* Scheidsrechter-status voor deze ronde */}
+                      {referees.length > 0 && (
+                        <p className="text-xs mt-0.5 font-semibold"
+                          style={{ color: refComplete ? '#22c55e' : refPartial ? '#f59e0b' : 'var(--text-secondary)' }}>
+                          {refComplete
+                            ? `👤 ✓ Alle ${withRef} scheidsrechters toegewezen`
+                            : refPartial
+                            ? `👤 ${withRef}/${activeMs.length} scheidsrechters toegewezen`
+                            : '👤 Nog geen scheidsrechters toegewezen'}
+                        </p>
+                      )}
                     </div>
                     {crStatus === 'live' && (
                       <div className="px-3 py-1.5 rounded-full text-sm font-bold flex-shrink-0"
