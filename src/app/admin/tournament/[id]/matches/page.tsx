@@ -474,6 +474,39 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       })
   }, [id])
 
+  // ── Realtime: wedstrijdupdates van scheidsrechters op telefoon ────────────────
+  useEffect(() => {
+    if (!id) return
+    const sub = supabase
+      .channel(`admin-rt-${id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'matches',
+        filter: `tournament_id=eq.${id}`,
+      }, ({ new: updated }) => {
+        const m = updated as Match
+        // Bewaar de gejoinde team/veld-data, update alleen de eigen kolommen
+        setMatches(prev => prev.map(p =>
+          p.id === m.id
+            ? { ...p, ...m, home_team: p.home_team, away_team: p.away_team, field: p.field }
+            : p
+        ))
+        // Update score-state als de admin niet zelf aan het typen is
+        setStates(prev => {
+          if (!prev[m.id] || prev[m.id].saving) return prev
+          return {
+            ...prev,
+            [m.id]: {
+              ...prev[m.id],
+              homeScore: m.home_score ?? prev[m.id].homeScore,
+              awayScore: m.away_score ?? prev[m.id].awayScore,
+            },
+          }
+        })
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(sub) }
+  }, [id])
+
   const upd = (matchId: string, p: Partial<MS>) =>
     setStates(prev => ({ ...prev, [matchId]: { ...prev[matchId], ...p } }))
 
@@ -1046,25 +1079,62 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     ? `${window.location.origin}/ref/${ref.id}/${ref.token}`
                     : ''
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
+
+                  const assignAllForField = async (fieldId: string) => {
+                    // Wijs alle wedstrijden op dit veld toe aan deze scheidsrechter
+                    const toAssign = matches.filter(m => m.field_id === fieldId && m.status !== 'cancelled')
+                    if (!toAssign.length) return
+                    await Promise.all(toAssign.map(m =>
+                      supabase.from('matches').update({ referee_id: ref.id }).eq('id', m.id)
+                    ))
+                    setMatches(prev => prev.map(m =>
+                      m.field_id === fieldId && m.status !== 'cancelled' ? { ...m, referee_id: ref.id } : m
+                    ))
+                  }
+
                   return (
                     <div key={ref.id}
-                      className="px-4 py-3 flex items-center gap-3"
+                      className="flex flex-col"
                       style={{ borderTop: idx > 0 ? '1px solid var(--border)' : undefined, backgroundColor: 'var(--bg-card)' }}>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-sm truncate">{ref.name}</p>
-                        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                          {assignedCount === 0 ? 'Geen wedstrijden toegewezen' : `${assignedCount} wedstrijd${assignedCount !== 1 ? 'en' : ''}`}
-                        </p>
+                      {/* Hoofdrij */}
+                      <div className="px-4 py-3 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-sm truncate">{ref.name}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            {assignedCount === 0 ? 'Geen wedstrijden' : `${assignedCount} wedstrijd${assignedCount !== 1 ? 'en' : ''}`}
+                          </p>
+                        </div>
+                        <RefQRButton refUrl={refUrl} qrUrl={qrUrl} refName={ref.name} />
+                        <button onClick={() => deleteReferee(ref.id)}
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-xs cursor-pointer active:scale-90 flex-shrink-0"
+                          style={{ backgroundColor: '#ef444415', color: '#ef4444', border: '1px solid #ef444430' }}
+                          title="Verwijder scheidsrechter">
+                          ✕
+                        </button>
                       </div>
-                      {/* QR/link popup */}
-                      <RefQRButton refUrl={refUrl} qrUrl={qrUrl} refName={ref.name} />
-                      {/* Verwijder */}
-                      <button onClick={() => deleteReferee(ref.id)}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-xs cursor-pointer active:scale-90 flex-shrink-0"
-                        style={{ backgroundColor: '#ef444415', color: '#ef4444', border: '1px solid #ef444430' }}
-                        title="Verwijder scheidsrechter">
-                        ✕
-                      </button>
+                      {/* Bulk-toewijzing per veld */}
+                      {fields.length > 0 && (
+                        <div className="px-4 pb-3 flex items-center gap-2 flex-wrap">
+                          <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>Wijs veld toe:</span>
+                          {fields.map(f => {
+                            const onField = matches.filter(m => m.field_id === f.id && m.status !== 'cancelled').length
+                            const alreadyAssigned = matches.filter(m => m.field_id === f.id && m.referee_id === ref.id).length === onField && onField > 0
+                            return (
+                              <button key={f.id}
+                                onClick={() => assignAllForField(f.id)}
+                                className="text-xs px-2.5 py-1 rounded-lg cursor-pointer active:scale-95 flex-shrink-0"
+                                style={{
+                                  backgroundColor: alreadyAssigned ? '#22c55e20' : 'var(--bg-elevated)',
+                                  color: alreadyAssigned ? '#22c55e' : 'var(--text-primary)',
+                                  border: `1px solid ${alreadyAssigned ? '#22c55e60' : 'var(--border)'}`,
+                                }}
+                                title={`Alle ${onField} wedstrijden op ${f.name} toewijzen`}>
+                                {alreadyAssigned ? '✓ ' : ''}{f.name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -1133,39 +1203,83 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           {/* ── Round detail ── */}
           {currentRound && <>
             {/* Round header */}
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-2xl font-bold">
-                  {getRoundPillLabel(currentRound.matches)
-                    ? KO_LABEL[currentRound.matches[0]?.phase] ?? `Ronde ${currentRound.round}`
-                    : `Ronde ${currentRound.round}`}
-                  {!getRoundPillLabel(currentRound.matches) && (
-                    <span className="text-base font-normal ml-1" style={{ color: 'var(--text-secondary)' }}>
-                      / {rounds.filter(r => !getRoundPillLabel(r.matches)).length}
-                    </span>
+            {(() => {
+              const activeMs = currentRound.matches.filter(m => m.status !== 'cancelled')
+              const plannedTime = roundTimeMap[currentRound.round]
+              const startTimes  = activeMs.map(m => m.started_at).filter(Boolean) as string[]
+              const endTimes    = activeMs.filter(m => m.status === 'finished').map(m => m.finished_at).filter(Boolean) as string[]
+              const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })
+              const earliestStart = startTimes.length ? fmtTime(startTimes.reduce((a, b) => a < b ? a : b)) : null
+              const latestEnd     = endTimes.length === activeMs.length && endTimes.length > 0
+                ? fmtTime(endTimes.reduce((a, b) => a > b ? a : b))
+                : null
+              return (
+                <div className="mb-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold">
+                        {getRoundPillLabel(currentRound.matches)
+                          ? KO_LABEL[currentRound.matches[0]?.phase] ?? `Ronde ${currentRound.round}`
+                          : `Ronde ${currentRound.round}`}
+                        {!getRoundPillLabel(currentRound.matches) && (
+                          <span className="text-base font-normal ml-1" style={{ color: 'var(--text-secondary)' }}>
+                            / {rounds.filter(r => !getRoundPillLabel(r.matches)).length}
+                          </span>
+                        )}
+                      </h2>
+                      <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        {crStatus === 'live'
+                          ? `${crLive.length} live · ${currentRound.matches.filter(m => m.status === 'finished').length}/${currentRound.matches.length} klaar`
+                          : crStatus === 'finished'
+                          ? `Alle ${activeMs.length} wedstrijden gespeeld`
+                          : `${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''} staan klaar`}
+                      </p>
+                    </div>
+                    {crStatus === 'live' && (
+                      <div className="px-3 py-1.5 rounded-full text-sm font-bold flex-shrink-0"
+                        style={{ backgroundColor: '#FF6B0020', color: 'var(--orange)', border: '1px solid #FF6B0050' }}>
+                        ● LIVE
+                      </div>
+                    )}
+                    {crStatus === 'finished' && (
+                      <div className="px-3 py-1.5 rounded-full text-sm font-bold flex-shrink-0"
+                        style={{ backgroundColor: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e50' }}>
+                        ✓ Gespeeld
+                      </div>
+                    )}
+                  </div>
+                  {/* Tijdsbalk: gepland · gestart · afgesloten */}
+                  {(plannedTime || earliestStart || latestEnd) && (
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      {plannedTime && (
+                        <span className="flex items-center gap-1 text-xs font-semibold"
+                          style={{ color: crStatus === 'scheduled' ? 'var(--orange)' : 'var(--text-secondary)' }}>
+                          🕐 {plannedTime}
+                        </span>
+                      )}
+                      {earliestStart && (
+                        <>
+                          {plannedTime && <span className="text-xs" style={{ color: 'var(--border)' }}>·</span>}
+                          <span className="flex items-center gap-1 text-xs font-semibold"
+                            style={{ color: '#22c55e' }}>
+                            ▶ {earliestStart}
+                          </span>
+                        </>
+                      )}
+                      {latestEnd && (
+                        <>
+                          <span className="text-xs" style={{ color: 'var(--border)' }}>·</span>
+                          <span className="flex items-center gap-1 text-xs font-semibold"
+                            style={{ color: 'var(--text-secondary)' }}>
+                            ■ {latestEnd}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   )}
-                </h2>
-                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  {crStatus === 'live'
-                    ? `${crLive.length} live · ${currentRound.matches.filter(m => m.status === 'finished').length}/${currentRound.matches.length} klaar`
-                    : crStatus === 'finished'
-                    ? `Alle ${currentRound.matches.filter(m => m.status !== 'cancelled').length} wedstrijden gespeeld`
-                    : `${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''} staan klaar`}
-                </p>
-              </div>
-              {crStatus === 'live' && (
-                <div className="px-3 py-1.5 rounded-full text-sm font-bold"
-                  style={{ backgroundColor: '#FF6B0020', color: 'var(--orange)', border: '1px solid #FF6B0050' }}>
-                  ● LIVE
                 </div>
-              )}
-              {crStatus === 'finished' && (
-                <div className="px-3 py-1.5 rounded-full text-sm font-bold"
-                  style={{ backgroundColor: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e50' }}>
-                  ✓ Gespeeld
-                </div>
-              )}
-            </div>
+              )
+            })()}
 
             {/* Match cards */}
             <div className="flex flex-col gap-3 mb-4">
