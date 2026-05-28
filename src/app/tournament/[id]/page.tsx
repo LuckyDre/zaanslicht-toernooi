@@ -3,6 +3,8 @@
 import { useEffect, useState, use, useMemo } from 'react'
 import Link from 'next/link'
 import { supabase, Tournament, Match, Standing, Team } from '@/lib/supabase'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const QRCode = (typeof window !== 'undefined') ? require('qrcode') : null
 import { Navbar }         from '@/components/ui/Navbar'
 import { Card }           from '@/components/ui/Card'
 import { Badge }          from '@/components/ui/Badge'
@@ -69,6 +71,8 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
   const [loading,    setLoading]    = useState(true)
   const [userId,     setUserId]     = useState<string | null>(null)
   const [favorites,  setFavorites]  = useState<string[]>([])
+  const [qrDataUrl,  setQrDataUrl]  = useState<string | null>(null)
+  const [showQR,     setShowQR]     = useState(false)
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -79,6 +83,15 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
         if (a.user) setUserId(a.user.id)
       }
     })
+  }, [])
+
+  // ── QR code genereren zodra pagina geladen is ─────────────────────────────
+  useEffect(() => {
+    if (!QRCode) return
+    const url = window.location.href
+    QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#111111', light: '#ffffff' } })
+      .then((dataUrl: string) => setQrDataUrl(dataUrl))
+      .catch(() => {/* QR generatie mislukt — stil negeren */})
   }, [])
 
   useEffect(() => {
@@ -216,22 +229,84 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
       <Navbar />
       <main className="max-w-2xl mx-auto px-4 py-6">
 
+        {/* ── QR Overlay ── */}
+        {showQR && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)' }}
+            onClick={() => setShowQR(false)}>
+            <div className="w-full max-w-xs rounded-3xl p-6 flex flex-col items-center gap-4"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+              onClick={e => e.stopPropagation()}>
+              {/* Logo in overlay */}
+              {tournament.logo_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={tournament.logo_url} alt="Logo" className="h-12 w-auto object-contain" />
+              )}
+              <div>
+                <p className="font-bold text-center text-base">{tournament.name}</p>
+                <p className="text-xs text-center mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                  Scan deze QR-code om de live pagina te openen
+                </p>
+              </div>
+              {qrDataUrl ? (
+                <div className="rounded-2xl overflow-hidden p-2 bg-white">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={qrDataUrl} alt="QR code" width={280} height={280} />
+                </div>
+              ) : (
+                <div className="w-[280px] h-[280px] rounded-2xl flex items-center justify-center"
+                  style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                  <div className="w-8 h-8 rounded-full border-2 animate-spin"
+                    style={{ borderColor: 'var(--orange)', borderTopColor: 'transparent' }} />
+                </div>
+              )}
+              <button onClick={() => setShowQR(false)}
+                className="w-full py-3 rounded-2xl font-bold text-sm cursor-pointer"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
+                Sluiten
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── Header ── */}
         <div className="mb-5">
           <Link href="/" className="text-sm mb-3 inline-block hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>
             ← Alle toernooien
           </Link>
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-bold">{tournament.name}</h1>
-              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                {tournament.num_teams} teams · {tournament.num_fields} veld{tournament.num_fields > 1 ? 'en' : ''} · {tournament.match_duration_minutes} min
-                {tournament.finals_type !== 'none' ? ' · met finales' : ''}
-              </p>
+            <div className="flex items-start gap-3 min-w-0">
+              {/* Club logo */}
+              {tournament.logo_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={tournament.logo_url} alt="Logo" className="w-12 h-12 rounded-xl object-contain flex-shrink-0"
+                  style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', padding: 4 }} />
+              )}
+              <div className="min-w-0">
+                <h1 className="text-2xl font-bold leading-tight">{tournament.name}</h1>
+                <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                  {tournament.num_teams} teams · {tournament.num_fields} veld{tournament.num_fields > 1 ? 'en' : ''} · {tournament.match_duration_minutes} min
+                  {tournament.finals_type !== 'none' ? ' · met finales' : ''}
+                </p>
+              </div>
             </div>
-            <Badge variant={tournament.status === 'active' ? 'green' : tournament.status === 'finished' ? 'orange' : 'gray'}>
-              {tournament.status === 'active' ? 'Live' : tournament.status === 'finished' ? 'Afgelopen' : 'Binnenkort'}
-            </Badge>
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              <Badge variant={tournament.status === 'active' ? 'green' : tournament.status === 'finished' ? 'orange' : 'gray'}>
+                {tournament.status === 'active' ? 'Live' : tournament.status === 'finished' ? 'Afgelopen' : 'Binnenkort'}
+              </Badge>
+              {/* QR deel-knop */}
+              <button onClick={() => setShowQR(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold cursor-pointer active:scale-95 transition-transform"
+                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                  <rect x="3" y="14" width="7" height="7" rx="1"/>
+                  <rect x="14" y="14" width="3" height="3"/><rect x="18" y="14" width="3" height="3"/>
+                  <rect x="14" y="18" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/>
+                </svg>
+                Deel
+              </button>
+            </div>
           </div>
         </div>
 

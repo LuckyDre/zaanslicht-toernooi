@@ -452,6 +452,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [newRefName, setNewRefName]       = useState('')
   const [addingRef, setAddingRef]         = useState(false)
   const [autoAssigning, setAutoAssigning] = useState(false)
+  const [showLogo, setShowLogo]           = useState(false)
+  const [logoUploading, setLogoUploading] = useState(false)
+  const [logoMsg, setLogoMsg]             = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -885,6 +888,34 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     setSavingTime(false); setEditStartTime('')
   }
 
+  // ─── Logo uploaden ──────────────────────────────────────────────────────────
+  const uploadLogo = async (file: File) => {
+    if (!tournament) return
+    setLogoUploading(true); setLogoMsg(null)
+    const ext  = file.name.split('.').pop()?.toLowerCase() ?? 'png'
+    const path = `${tournament.id}/logo.${ext}`
+    const { error: upErr } = await supabase.storage
+      .from('logos').upload(path, file, { upsert: true, contentType: file.type })
+    if (upErr) {
+      setLogoMsg({ ok: false, text: `Upload mislukt: ${upErr.message}` })
+      setLogoUploading(false); return
+    }
+    const { data: { publicUrl } } = supabase.storage.from('logos').getPublicUrl(path)
+    // Voeg cache-busting toe zodat de browser de nieuwe versie toont
+    const busted = `${publicUrl}?t=${Date.now()}`
+    await supabase.from('tournaments').update({ logo_url: busted }).eq('id', tournament.id)
+    setTournament(prev => prev ? { ...prev, logo_url: busted } : prev)
+    setLogoMsg({ ok: true, text: 'Logo opgeslagen ✓' })
+    setLogoUploading(false)
+    setTimeout(() => setLogoMsg(null), 3000)
+  }
+
+  const removeLogo = async () => {
+    if (!tournament || !confirm('Logo verwijderen?')) return
+    await supabase.from('tournaments').update({ logo_url: null }).eq('id', tournament.id)
+    setTournament(prev => prev ? { ...prev, logo_url: null } : prev)
+  }
+
   // ── Compute tournament winner for winner banner ─────────────────────────────
   const allMatchesDone = matches.length > 0 && matches.every(m => m.status === 'finished' || m.status === 'cancelled')
   const tournamentWinner = useMemo((): { name: string; color: string } | null => {
@@ -1084,6 +1115,67 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     </div>
                   )
                 })()}
+              </div>
+            )}
+          </div>
+
+          {/* ── Logo sectie ── */}
+          <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+            <button
+              onClick={() => setShowLogo(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-card)' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold">🖼️ Club logo</span>
+                {tournament?.logo_url
+                  ? <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#22c55e20', color: '#22c55e' }}>Ingesteld</span>
+                  : <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Niet ingesteld</span>}
+              </div>
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{showLogo ? '▲' : '▼'}</span>
+            </button>
+
+            {showLogo && (
+              <div style={{ borderTop: '1px solid var(--border)' }}>
+                <div className="px-4 py-4 flex flex-col gap-3">
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    Het logo van de gastvereniging wordt weergegeven op de publieke toernooi-pagina en in de QR-deel popup.
+                    Upload een vierkant logo (PNG of SVG werkt het beste).
+                  </p>
+                  {/* Huidig logo */}
+                  {tournament?.logo_url && (
+                    <div className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={tournament.logo_url} alt="Logo" className="w-14 h-14 rounded-lg object-contain"
+                        style={{ backgroundColor: '#fff', padding: 4 }} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">Huidig logo</p>
+                        <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-secondary)' }}>
+                          Zichtbaar op de publieks&shy;pagina
+                        </p>
+                      </div>
+                      <button onClick={removeLogo}
+                        className="text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer"
+                        style={{ backgroundColor: '#ef444415', color: '#ef4444', border: '1px solid #ef444430' }}>
+                        Verwijder
+                      </button>
+                    </div>
+                  )}
+                  {/* Upload knop */}
+                  <label className="flex items-center justify-center gap-2 rounded-2xl py-3 px-4 cursor-pointer transition-all active:scale-[0.98]"
+                    style={{ backgroundColor: logoUploading ? 'var(--bg-elevated)' : 'var(--orange)', color: logoUploading ? 'var(--text-secondary)' : '#fff', border: `2px dashed ${logoUploading ? 'var(--border)' : 'var(--orange)'}` }}>
+                    {logoUploading
+                      ? <><span className="w-4 h-4 rounded-full border-2 animate-spin inline-block" style={{ borderColor: 'var(--text-secondary)', borderTopColor: 'transparent' }} /> Uploading…</>
+                      : <><span className="text-lg">📁</span> <span className="font-bold text-sm">{tournament?.logo_url ? 'Vervang logo' : 'Upload logo'}</span></>
+                    }
+                    <input type="file" accept="image/*" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogo(f); e.target.value = '' }} />
+                  </label>
+                  {logoMsg && (
+                    <p className="text-xs font-semibold text-center" style={{ color: logoMsg.ok ? '#22c55e' : '#ef4444' }}>
+                      {logoMsg.text}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </div>

@@ -21,6 +21,7 @@ export type Tournament = {
   starts_at: string | null
   ref_token: string | null
   status: 'draft' | 'active' | 'finished'
+  logo_url: string | null
   created_at: string
   updated_at: string
 }
