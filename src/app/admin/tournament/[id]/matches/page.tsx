@@ -444,7 +444,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showReferees, setShowReferees]   = useState(false)
   const [newRefName, setNewRefName]       = useState('')
   const [addingRef, setAddingRef]         = useState(false)
-  const [expandedRefField, setExpandedRefField] = useState<{ refId: string; fieldId: string } | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -1081,11 +1080,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     : ''
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
 
-                  const toggleMatch = async (matchId: string, currentRefId: string | null) => {
-                    const newRefId = currentRefId === ref.id ? null : ref.id
-                    await supabase.from('matches').update({ referee_id: newRefId }).eq('id', matchId)
-                    setMatches(prev => prev.map(m => m.id === matchId ? { ...m, referee_id: newRefId } : m))
-                  }
 
                   return (
                     <div key={ref.id}
@@ -1107,67 +1101,70 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                           ✕
                         </button>
                       </div>
-                      {/* Toewijzing: kies veld → toggle rondes */}
+                      {/* Rooster: per veld alle rondes zichtbaar, geen inklapmenu */}
                       {fields.length > 0 && (
-                        <div className="px-4 pb-3 flex flex-col gap-2">
-                          {/* Veld-knoppen */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>Veld:</span>
-                            {fields.map(f => {
-                              const fieldMs = matches.filter(m => m.field_id === f.id && m.status !== 'cancelled')
-                              const myCount  = fieldMs.filter(m => m.referee_id === ref.id).length
-                              const allMine  = myCount === fieldMs.length && fieldMs.length > 0
-                              const someMine = myCount > 0 && !allMine
-                              const isOpen   = expandedRefField?.refId === ref.id && expandedRefField?.fieldId === f.id
-                              return (
-                                <button key={f.id}
-                                  onClick={() => setExpandedRefField(isOpen ? null : { refId: ref.id, fieldId: f.id })}
-                                  className="text-xs px-2.5 py-1 rounded-lg cursor-pointer active:scale-95 flex-shrink-0 font-semibold"
-                                  style={{
-                                    backgroundColor: allMine ? '#22c55e20' : someMine ? '#FF6B0015' : 'var(--bg-elevated)',
-                                    color: allMine ? '#22c55e' : someMine ? 'var(--orange)' : 'var(--text-secondary)',
-                                    border: `1px solid ${allMine ? '#22c55e50' : someMine ? '#FF6B0050' : 'var(--border)'}`,
-                                  }}>
-                                  {allMine ? '✓ ' : someMine ? '~ ' : ''}{f.name} {isOpen ? '▲' : '▼'}
-                                </button>
-                              )
-                            })}
-                          </div>
-                          {/* Ronde-picker voor het gekozen veld */}
-                          {expandedRefField?.refId === ref.id && (() => {
-                            const selField = fields.find(f => f.id === expandedRefField.fieldId)
-                            const fieldMs  = matches
-                              .filter(m => m.field_id === expandedRefField.fieldId && m.status !== 'cancelled')
+                        <div className="px-4 pb-3 flex flex-col gap-1.5">
+                          {fields.map(f => {
+                            const fieldMs = matches
+                              .filter(m => m.field_id === f.id && m.status !== 'cancelled')
                               .sort((a, b) => (a.round ?? 0) - (b.round ?? 0))
                             if (!fieldMs.length) return null
                             return (
-                              <div className="rounded-xl p-2 flex items-center gap-1.5 flex-wrap"
-                                style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
-                                <span className="text-[10px] font-semibold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
-                                  {selField?.name}:
+                              <div key={f.id} className="flex items-start gap-2">
+                                {/* Veldnaam links */}
+                                <span className="text-[11px] font-semibold flex-shrink-0 pt-0.5"
+                                  style={{ color: 'var(--text-secondary)', minWidth: 44 }}>
+                                  {f.name}:
                                 </span>
-                                {fieldMs.map(m => {
-                                  const isMine  = m.referee_id === ref.id
-                                  const isOther = m.referee_id !== null && !isMine
-                                  const other   = isOther ? referees.find(r => r.id === m.referee_id) : null
-                                  const pill    = getRoundPillLabel(rounds.find(r => r.round === m.round)?.matches ?? [])
-                                  return (
-                                    <button key={m.id}
-                                      onClick={() => toggleMatch(m.id, m.referee_id)}
-                                      title={isOther ? `Nu: ${other?.name ?? '?'} — klik om over te nemen` : isMine ? 'Klik = pauze' : 'Klik = toewijzen'}
-                                      className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer active:scale-95 font-semibold"
-                                      style={{
-                                        backgroundColor: isMine ? '#22c55e20' : isOther ? '#ef444415' : 'var(--bg-card)',
-                                        color: isMine ? '#22c55e' : isOther ? '#ef4444' : 'var(--text-secondary)',
-                                        border: `1px solid ${isMine ? '#22c55e50' : isOther ? '#ef444430' : 'var(--border)'}`,
-                                      }}>
-                                      {isMine ? '✓ ' : isOther ? '✗ ' : ''}{pill ?? `R${m.round}`}
-                                    </button>
-                                  )
-                                })}
+                                {/* Ronde-pills rechts, wrappend */}
+                                <div className="flex flex-wrap gap-1">
+                                  {fieldMs.map(m => {
+                                    const isMine  = m.referee_id === ref.id
+                                    const isOther = m.referee_id !== null && !isMine
+                                    const other   = isOther ? referees.find(r => r.id === m.referee_id) : null
+                                    const pill    = getRoundPillLabel(rounds.find(r => r.round === m.round)?.matches ?? [])
+
+                                    const handleClick = async () => {
+                                      // Toewijzen of verwijderen
+                                      const newRefId = isMine ? null : ref.id
+                                      // Dubbelboeking voorkomen: verwijder scheids uit andere velden in dezelfde ronde
+                                      const conflicts = newRefId !== null
+                                        ? matches.filter(x => x.id !== m.id && x.round === m.round && x.referee_id === ref.id)
+                                        : []
+                                      const toUpdate = [
+                                        { id: m.id, refId: newRefId },
+                                        ...conflicts.map(x => ({ id: x.id, refId: null as string | null })),
+                                      ]
+                                      await Promise.all(toUpdate.map(({ id, refId }) =>
+                                        supabase.from('matches').update({ referee_id: refId }).eq('id', id)
+                                      ))
+                                      setMatches(prev => prev.map(p => {
+                                        const u = toUpdate.find(t => t.id === p.id)
+                                        return u ? { ...p, referee_id: u.refId } : p
+                                      }))
+                                    }
+
+                                    return (
+                                      <button key={m.id} onClick={handleClick}
+                                        title={
+                                          isOther ? `Nu: ${other?.name ?? '?'} — klik om over te nemen`
+                                          : isMine ? 'Klik = pauze geven'
+                                          : 'Klik = toewijzen'
+                                        }
+                                        className="text-[11px] px-1.5 py-0.5 rounded-md cursor-pointer active:scale-95 font-semibold transition-colors"
+                                        style={{
+                                          backgroundColor: isMine ? '#22c55e20' : isOther ? '#ef444415' : 'var(--bg-elevated)',
+                                          color: isMine ? '#22c55e' : isOther ? '#ef4444' : 'var(--text-secondary)',
+                                          border: `1px solid ${isMine ? '#22c55e50' : isOther ? '#ef444435' : 'var(--border)'}`,
+                                        }}>
+                                        {pill ?? `R${m.round}`}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
                               </div>
                             )
-                          })()}
+                          })}
                         </div>
                       )}
                     </div>
