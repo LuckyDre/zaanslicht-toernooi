@@ -240,8 +240,7 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
               {/* Logo in overlay (custom of Zaans Licht als fallback) */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={tournament.logo_url ?? '/zaanslicht-logo.png'} alt="Logo"
-                className="h-14 w-auto object-contain rounded-xl"
-                style={{ backgroundColor: 'white', padding: 6 }} />
+                className="h-16 w-auto object-contain" />
               <div>
                 <p className="font-bold text-center text-base">{tournament.name}</p>
                 <p className="text-xs text-center mt-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -277,14 +276,9 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
               {/* Club logo (custom of Zaans Licht als fallback) */}
-              {(() => {
-                const logoSrc = tournament.logo_url ?? '/zaanslicht-logo.png'
-                return (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={logoSrc} alt="Logo" className="w-12 h-12 rounded-xl object-contain flex-shrink-0"
-                    style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', padding: 4 }} />
-                )
-              })()}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={tournament.logo_url ?? '/zaanslicht-logo.png'} alt="Logo"
+                className="w-12 h-12 object-contain flex-shrink-0" />
               <div className="min-w-0">
                 <h1 className="text-2xl font-bold leading-tight">{tournament.name}</h1>
                 <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
