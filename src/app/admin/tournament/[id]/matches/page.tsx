@@ -1080,16 +1080,26 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     : ''
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
 
-                  const assignAllForField = async (fieldId: string) => {
-                    // Wijs alle wedstrijden op dit veld toe aan deze scheidsrechter
-                    const toAssign = matches.filter(m => m.field_id === fieldId && m.status !== 'cancelled')
-                    if (!toAssign.length) return
-                    await Promise.all(toAssign.map(m =>
-                      supabase.from('matches').update({ referee_id: ref.id }).eq('id', m.id)
-                    ))
-                    setMatches(prev => prev.map(m =>
-                      m.field_id === fieldId && m.status !== 'cancelled' ? { ...m, referee_id: ref.id } : m
-                    ))
+                  const toggleRound = async (roundNum: number) => {
+                    const roundMs = matches.filter(m => m.round === roundNum && m.status !== 'cancelled')
+                    const allMine = roundMs.length > 0 && roundMs.every(m => m.referee_id === ref.id)
+                    if (allMine) {
+                      // Al toegewezen → klik = verwijder (geeft pauze)
+                      await Promise.all(roundMs.map(m =>
+                        supabase.from('matches').update({ referee_id: null }).eq('id', m.id)
+                      ))
+                      setMatches(prev => prev.map(m =>
+                        m.round === roundNum && m.status !== 'cancelled' ? { ...m, referee_id: null } : m
+                      ))
+                    } else {
+                      // Nog niet toegewezen → wijs toe aan deze scheids
+                      await Promise.all(roundMs.map(m =>
+                        supabase.from('matches').update({ referee_id: ref.id }).eq('id', m.id)
+                      ))
+                      setMatches(prev => prev.map(m =>
+                        m.round === roundNum && m.status !== 'cancelled' ? { ...m, referee_id: ref.id } : m
+                      ))
+                    }
                   }
 
                   return (
@@ -1112,24 +1122,27 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                           ✕
                         </button>
                       </div>
-                      {/* Bulk-toewijzing per veld */}
-                      {fields.length > 0 && (
-                        <div className="px-4 pb-3 flex items-center gap-2 flex-wrap">
-                          <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>Wijs veld toe:</span>
-                          {fields.map(f => {
-                            const onField = matches.filter(m => m.field_id === f.id && m.status !== 'cancelled').length
-                            const alreadyAssigned = matches.filter(m => m.field_id === f.id && m.referee_id === ref.id).length === onField && onField > 0
+                      {/* Bulk-toewijzing per ronde — klik aan/uit voor pauze */}
+                      {rounds.length > 0 && (
+                        <div className="px-4 pb-3 flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs flex-shrink-0 mr-0.5" style={{ color: 'var(--text-secondary)' }}>Rondes:</span>
+                          {rounds.map(({ round, matches: rm }) => {
+                            const nonCancelled = rm.filter(m => m.status !== 'cancelled')
+                            const myCount  = nonCancelled.filter(m => m.referee_id === ref.id).length
+                            const allMine  = myCount === nonCancelled.length && nonCancelled.length > 0
+                            const someMine = myCount > 0 && !allMine
+                            const pill     = getRoundPillLabel(rm)
                             return (
-                              <button key={f.id}
-                                onClick={() => assignAllForField(f.id)}
-                                className="text-xs px-2.5 py-1 rounded-lg cursor-pointer active:scale-95 flex-shrink-0"
+                              <button key={round}
+                                onClick={() => toggleRound(round)}
+                                className="text-xs px-2 py-1 rounded-lg cursor-pointer active:scale-95 flex-shrink-0 font-semibold"
+                                title={allMine ? `Ronde ${round} verwijderen (pauze)` : `Ronde ${round} toewijzen`}
                                 style={{
-                                  backgroundColor: alreadyAssigned ? '#22c55e20' : 'var(--bg-elevated)',
-                                  color: alreadyAssigned ? '#22c55e' : 'var(--text-primary)',
-                                  border: `1px solid ${alreadyAssigned ? '#22c55e60' : 'var(--border)'}`,
-                                }}
-                                title={`Alle ${onField} wedstrijden op ${f.name} toewijzen`}>
-                                {alreadyAssigned ? '✓ ' : ''}{f.name}
+                                  backgroundColor: allMine ? '#22c55e20' : someMine ? '#FF6B0015' : 'var(--bg-elevated)',
+                                  color: allMine ? '#22c55e' : someMine ? 'var(--orange)' : 'var(--text-secondary)',
+                                  border: `1px solid ${allMine ? '#22c55e50' : someMine ? '#FF6B0050' : 'var(--border)'}`,
+                                }}>
+                                {allMine ? '✓ ' : someMine ? '~ ' : ''}{pill ?? `R${round}`}
                               </button>
                             )
                           })}
