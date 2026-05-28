@@ -444,6 +444,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showReferees, setShowReferees]   = useState(false)
   const [newRefName, setNewRefName]       = useState('')
   const [addingRef, setAddingRef]         = useState(false)
+  const [expandedRefField, setExpandedRefField] = useState<{ refId: string; fieldId: string } | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -1080,26 +1081,10 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     : ''
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
 
-                  const toggleRound = async (roundNum: number) => {
-                    const roundMs = matches.filter(m => m.round === roundNum && m.status !== 'cancelled')
-                    const allMine = roundMs.length > 0 && roundMs.every(m => m.referee_id === ref.id)
-                    if (allMine) {
-                      // Al toegewezen → klik = verwijder (geeft pauze)
-                      await Promise.all(roundMs.map(m =>
-                        supabase.from('matches').update({ referee_id: null }).eq('id', m.id)
-                      ))
-                      setMatches(prev => prev.map(m =>
-                        m.round === roundNum && m.status !== 'cancelled' ? { ...m, referee_id: null } : m
-                      ))
-                    } else {
-                      // Nog niet toegewezen → wijs toe aan deze scheids
-                      await Promise.all(roundMs.map(m =>
-                        supabase.from('matches').update({ referee_id: ref.id }).eq('id', m.id)
-                      ))
-                      setMatches(prev => prev.map(m =>
-                        m.round === roundNum && m.status !== 'cancelled' ? { ...m, referee_id: ref.id } : m
-                      ))
-                    }
+                  const toggleMatch = async (matchId: string, currentRefId: string | null) => {
+                    const newRefId = currentRefId === ref.id ? null : ref.id
+                    await supabase.from('matches').update({ referee_id: newRefId }).eq('id', matchId)
+                    setMatches(prev => prev.map(m => m.id === matchId ? { ...m, referee_id: newRefId } : m))
                   }
 
                   return (
@@ -1122,30 +1107,67 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                           ✕
                         </button>
                       </div>
-                      {/* Bulk-toewijzing per ronde — klik aan/uit voor pauze */}
-                      {rounds.length > 0 && (
-                        <div className="px-4 pb-3 flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs flex-shrink-0 mr-0.5" style={{ color: 'var(--text-secondary)' }}>Rondes:</span>
-                          {rounds.map(({ round, matches: rm }) => {
-                            const nonCancelled = rm.filter(m => m.status !== 'cancelled')
-                            const myCount  = nonCancelled.filter(m => m.referee_id === ref.id).length
-                            const allMine  = myCount === nonCancelled.length && nonCancelled.length > 0
-                            const someMine = myCount > 0 && !allMine
-                            const pill     = getRoundPillLabel(rm)
+                      {/* Toewijzing: kies veld → toggle rondes */}
+                      {fields.length > 0 && (
+                        <div className="px-4 pb-3 flex flex-col gap-2">
+                          {/* Veld-knoppen */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>Veld:</span>
+                            {fields.map(f => {
+                              const fieldMs = matches.filter(m => m.field_id === f.id && m.status !== 'cancelled')
+                              const myCount  = fieldMs.filter(m => m.referee_id === ref.id).length
+                              const allMine  = myCount === fieldMs.length && fieldMs.length > 0
+                              const someMine = myCount > 0 && !allMine
+                              const isOpen   = expandedRefField?.refId === ref.id && expandedRefField?.fieldId === f.id
+                              return (
+                                <button key={f.id}
+                                  onClick={() => setExpandedRefField(isOpen ? null : { refId: ref.id, fieldId: f.id })}
+                                  className="text-xs px-2.5 py-1 rounded-lg cursor-pointer active:scale-95 flex-shrink-0 font-semibold"
+                                  style={{
+                                    backgroundColor: allMine ? '#22c55e20' : someMine ? '#FF6B0015' : 'var(--bg-elevated)',
+                                    color: allMine ? '#22c55e' : someMine ? 'var(--orange)' : 'var(--text-secondary)',
+                                    border: `1px solid ${allMine ? '#22c55e50' : someMine ? '#FF6B0050' : 'var(--border)'}`,
+                                  }}>
+                                  {allMine ? '✓ ' : someMine ? '~ ' : ''}{f.name} {isOpen ? '▲' : '▼'}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          {/* Ronde-picker voor het gekozen veld */}
+                          {expandedRefField?.refId === ref.id && (() => {
+                            const selField = fields.find(f => f.id === expandedRefField.fieldId)
+                            const fieldMs  = matches
+                              .filter(m => m.field_id === expandedRefField.fieldId && m.status !== 'cancelled')
+                              .sort((a, b) => (a.round ?? 0) - (b.round ?? 0))
+                            if (!fieldMs.length) return null
                             return (
-                              <button key={round}
-                                onClick={() => toggleRound(round)}
-                                className="text-xs px-2 py-1 rounded-lg cursor-pointer active:scale-95 flex-shrink-0 font-semibold"
-                                title={allMine ? `Ronde ${round} verwijderen (pauze)` : `Ronde ${round} toewijzen`}
-                                style={{
-                                  backgroundColor: allMine ? '#22c55e20' : someMine ? '#FF6B0015' : 'var(--bg-elevated)',
-                                  color: allMine ? '#22c55e' : someMine ? 'var(--orange)' : 'var(--text-secondary)',
-                                  border: `1px solid ${allMine ? '#22c55e50' : someMine ? '#FF6B0050' : 'var(--border)'}`,
-                                }}>
-                                {allMine ? '✓ ' : someMine ? '~ ' : ''}{pill ?? `R${round}`}
-                              </button>
+                              <div className="rounded-xl p-2 flex items-center gap-1.5 flex-wrap"
+                                style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+                                <span className="text-[10px] font-semibold flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                                  {selField?.name}:
+                                </span>
+                                {fieldMs.map(m => {
+                                  const isMine  = m.referee_id === ref.id
+                                  const isOther = m.referee_id !== null && !isMine
+                                  const other   = isOther ? referees.find(r => r.id === m.referee_id) : null
+                                  const pill    = getRoundPillLabel(rounds.find(r => r.round === m.round)?.matches ?? [])
+                                  return (
+                                    <button key={m.id}
+                                      onClick={() => toggleMatch(m.id, m.referee_id)}
+                                      title={isOther ? `Nu: ${other?.name ?? '?'} — klik om over te nemen` : isMine ? 'Klik = pauze' : 'Klik = toewijzen'}
+                                      className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer active:scale-95 font-semibold"
+                                      style={{
+                                        backgroundColor: isMine ? '#22c55e20' : isOther ? '#ef444415' : 'var(--bg-card)',
+                                        color: isMine ? '#22c55e' : isOther ? '#ef4444' : 'var(--text-secondary)',
+                                        border: `1px solid ${isMine ? '#22c55e50' : isOther ? '#ef444430' : 'var(--border)'}`,
+                                      }}>
+                                      {isMine ? '✓ ' : isOther ? '✗ ' : ''}{pill ?? `R${m.round}`}
+                                    </button>
+                                  )
+                                })}
+                              </div>
                             )
-                          })}
+                          })()}
                         </div>
                       )}
                     </div>
