@@ -19,6 +19,7 @@ export type Tournament = {
   pool_names: string[] | null
   break_minutes: number
   starts_at: string | null
+  ref_token: string | null
   status: 'draft' | 'active' | 'finished'
   created_at: string
   updated_at: string

@@ -308,8 +308,10 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [generatingKO, setGeneratingKO]   = useState(false)
   const [showBracket, setShowBracket]     = useState(false)
   const [showTimeline, setShowTimeline]   = useState(false)
+  const [showRefLink, setShowRefLink]     = useState(false)
   const [editStartTime, setEditStartTime] = useState('')
   const [savingTime, setSavingTime]       = useState(false)
+  const [copied, setCopied]               = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -676,6 +678,79 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
           onClose={() => setShowBracket(false)}
         />
       )}
+
+      {/* ── Scheidsrechter QR-overlay ── */}
+      {showRefLink && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setShowRefLink(false)}>
+          <div
+            className="w-full max-w-sm rounded-3xl p-6 flex flex-col items-center gap-4"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+            onClick={e => e.stopPropagation()}>
+
+            <div className="flex items-center justify-between w-full">
+              <h2 className="text-lg font-bold">📱 Scheidsrechter toegang</h2>
+              <button
+                onClick={() => setShowRefLink(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm cursor-pointer"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                ✕
+              </button>
+            </div>
+
+            {!tournament?.ref_token ? (
+              <div className="text-sm text-center px-2" style={{ color: 'var(--text-secondary)' }}>
+                <p className="mb-2">⚠️ Geen scheidsrechterscode gevonden.</p>
+                <p>Voer de database-migratie uit via Supabase SQL Editor:</p>
+                <pre className="mt-2 text-xs rounded-xl p-3 text-left overflow-x-auto"
+                  style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
+                  {`ALTER TABLE tournaments\n  ADD COLUMN IF NOT EXISTS ref_token uuid\n  DEFAULT gen_random_uuid();`}
+                </pre>
+              </div>
+            ) : (() => {
+              const refUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/ref/${id}/${tournament.ref_token}`
+              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+              return (
+                <>
+                  <p className="text-sm text-center" style={{ color: 'var(--text-secondary)' }}>
+                    Scan de QR-code of deel de link met de scheidsrechter.
+                  </p>
+
+                  {/* QR code */}
+                  <div className="rounded-2xl overflow-hidden" style={{ border: '2px solid var(--border)' }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={qrUrl} alt="QR scheidsrechter" width={200} height={200} />
+                  </div>
+
+                  {/* URL pill */}
+                  <div className="w-full rounded-2xl px-3 py-2 text-xs font-mono break-all text-center"
+                    style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                    {refUrl}
+                  </div>
+
+                  {/* Copy button */}
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(refUrl)
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 2500)
+                    }}
+                    className="w-full rounded-2xl py-3 font-bold text-sm cursor-pointer transition-all active:scale-[0.98]"
+                    style={{
+                      backgroundColor: copied ? '#22c55e' : 'var(--orange)',
+                      color: '#fff',
+                    }}>
+                    {copied ? '✓ Gekopieerd!' : '📋 Kopieer link'}
+                  </button>
+                </>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
       <Navbar isAdmin />
       <main className="max-w-xl mx-auto px-4 py-5">
 
@@ -691,6 +766,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             {liveCount > 0 && (
               <Button size="sm" variant="danger" loading={stopAllSaving} onClick={stopAll}>■ Stop alles</Button>
             )}
+            <Button size="sm" variant="secondary" onClick={() => setShowRefLink(true)}>📱 Scheids</Button>
             {koMatches.length > 0 && (
               <Button size="sm" variant="secondary" onClick={() => setShowBracket(true)}>📊 Bracket</Button>
             )}

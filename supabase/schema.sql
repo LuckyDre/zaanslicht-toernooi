@@ -15,6 +15,7 @@ create table if not exists tournaments (
   pool_names text[],
   break_minutes int not null default 10,
   starts_at timestamptz,
+  ref_token uuid default gen_random_uuid(),
   status text not null default 'draft' check (status in ('draft','active','finished')),
   created_at timestamptz default now(),
   updated_at timestamptz default now()
@@ -175,3 +176,59 @@ $$ language plpgsql security definer;
 create trigger on_match_finished
   after update on matches
   for each row execute function update_standings();
+
+-- ── Scheidsrechter functies ──────────────────────────────────────────────────
+
+-- Valideer of een ref_token klopt bij een toernooi
+create or replace function validate_ref_token(p_tournament_id uuid, p_ref_token uuid)
+returns boolean language plpgsql security definer as $$
+begin
+  return exists(
+    select 1 from tournaments
+    where id = p_tournament_id
+      and ref_token = p_ref_token
+  );
+end;
+$$;
+
+-- Scheidsrechter past wedstrijduitslag aan (omzeilt RLS via SECURITY DEFINER)
+create or replace function update_match_as_referee(
+  p_match_id     uuid,
+  p_ref_token    uuid,
+  p_home_score   int,
+  p_away_score   int,
+  p_status       text,
+  p_started_at   timestamptz default null,
+  p_finished_at  timestamptz default null
+)
+returns json language plpgsql security definer as $$
+declare
+  v_token uuid;
+begin
+  -- Controleer token via tournament
+  select t.ref_token into v_token
+  from matches m join tournaments t on t.id = m.tournament_id
+  where m.id = p_match_id;
+
+  if v_token is null or v_token != p_ref_token then
+    return json_build_object('success', false, 'error', 'Ongeldige scheidsrechterscode');
+  end if;
+
+  update matches set
+    home_score  = p_home_score,
+    away_score  = p_away_score,
+    status      = p_status,
+    started_at  = case when p_started_at is not null then p_started_at else started_at end,
+    finished_at = case
+      when p_status = 'finished' then coalesce(p_finished_at, now())
+      when p_status = 'live'     then null
+      else finished_at
+    end
+  where id = p_match_id;
+
+  return json_build_object('success', true);
+end;
+$$;
+
+-- Migratie: voeg ref_token toe aan bestaande toernooien
+alter table tournaments add column if not exists ref_token uuid default gen_random_uuid();
