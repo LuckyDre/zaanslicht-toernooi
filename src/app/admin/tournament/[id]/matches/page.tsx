@@ -451,6 +451,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showReferees, setShowReferees]   = useState(false)
   const [newRefName, setNewRefName]       = useState('')
   const [addingRef, setAddingRef]         = useState(false)
+  const [autoAssigning, setAutoAssigning] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -566,6 +567,56 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const assignReferee = async (matchId: string, refId: string | null) => {
     await supabase.from('matches').update({ referee_id: refId }).eq('id', matchId)
     setMatches(prev => prev.map(m => m.id === matchId ? { ...m, referee_id: refId } : m))
+  }
+
+  const autoAssign = async () => {
+    if (!referees.length) return
+    if (!confirm(`Wedstrijden automatisch verdelen over ${referees.length} scheidsrechter${referees.length !== 1 ? 's' : ''}?\n\nBestaande toewijzingen worden overschreven.`)) return
+    setAutoAssigning(true)
+
+    // Alle niet-geannuleerde wedstrijden, gesorteerd op ronde en veldnummer
+    const toAssign = matches
+      .filter(m => m.status !== 'cancelled')
+      .sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || (a.match_number ?? 0) - (b.match_number ?? 0))
+
+    // Wedstrijden groeperen per ronde
+    const roundGroups: Record<number, typeof toAssign> = {}
+    toAssign.forEach(m => {
+      const r = m.round ?? 0
+      if (!roundGroups[r]) roundGroups[r] = []
+      roundGroups[r].push(m)
+    })
+
+    // Greedy verdeling: geef elke ronde de scheids met de minste wedstrijden die nog vrij is
+    const counts: Record<string, number> = {}
+    referees.forEach(r => { counts[r.id] = 0 })
+
+    const updates: { id: string; refId: string }[] = []
+
+    for (const roundNum of Object.keys(roundGroups).map(Number).sort((a, b) => a - b)) {
+      const roundMs  = roundGroups[roundNum]
+      const usedInRound = new Set<string>()
+
+      for (const m of roundMs) {
+        const available = referees.filter(r => !usedInRound.has(r.id))
+        if (!available.length) break // meer velden dan scheidsrechters in deze ronde
+
+        // Kies de scheids met de laagste werklast
+        const best = available.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b)
+        updates.push({ id: m.id, refId: best.id })
+        counts[best.id]++
+        usedInRound.add(best.id)
+      }
+    }
+
+    await Promise.all(updates.map(({ id, refId }) =>
+      supabase.from('matches').update({ referee_id: refId }).eq('id', id)
+    ))
+    setMatches(prev => prev.map(m => {
+      const u = updates.find(x => x.id === m.id)
+      return u ? { ...m, referee_id: u.refId } : m
+    }))
+    setAutoAssigning(false)
   }
 
   const saveMatch = async (match: Match, status: Match['status']) => {
@@ -1055,7 +1106,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
             {showReferees && (
               <div style={{ borderTop: '1px solid var(--border)' }}>
-                {/* Scheidsrechter toevoegen */}
+                {/* Scheidsrechter toevoegen + automatisch verdelen */}
                 <div className="px-4 py-3 flex items-center gap-2"
                   style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
                   <input
@@ -1073,6 +1124,20 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     {addingRef ? '…' : '+ Voeg toe'}
                   </button>
                 </div>
+                {/* Automatisch verdelen */}
+                {referees.length >= 2 && (
+                  <div className="px-4 py-2.5 flex items-center justify-between gap-3"
+                    style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+                    <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      Verdeel alle wedstrijden eerlijk over {referees.length} scheidsrechters
+                    </p>
+                    <button onClick={autoAssign} disabled={autoAssigning}
+                      className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50 flex-shrink-0 active:scale-95"
+                      style={{ backgroundColor: '#22c55e20', color: '#22c55e', border: '1px solid #22c55e50' }}>
+                      {autoAssigning ? '⏳ Bezig…' : '🎲 Verdeel automatisch'}
+                    </button>
+                  </div>
+                )}
 
                 {/* Lijst van scheidsrechters */}
                 {referees.length === 0 && (
