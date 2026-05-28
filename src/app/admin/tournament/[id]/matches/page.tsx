@@ -207,10 +207,10 @@ function RefQRButton({ refUrl, qrUrl, refName }: { refUrl: string; qrUrl: string
 
 // ─── Match card ──────────────────────────────────────────────────────────────
 function MatchCard({
-  match, s, matchMinutes, expectedTime, referees, onUpd, onSaveScore, onSave, onAssignRef,
+  match, s, matchMinutes, expectedTime, referees, canStart, onUpd, onSaveScore, onSave, onAssignRef,
 }: {
   match: Match; s: MS; matchMinutes: number; expectedTime?: string | null
-  referees: Referee[]
+  referees: Referee[]; canStart: boolean
   onUpd: (p: Partial<MS>) => void
   onSaveScore: () => void
   onSave: (status: Match['status']) => void
@@ -350,7 +350,7 @@ function MatchCard({
       )}
 
       <div className="flex gap-2 px-4 pb-4">
-        {isScheduled && (
+        {isScheduled && canStart && (
           <Button size="sm" loading={s.saving} onClick={() => onSave('live')} className="flex-1">▶ Start dit veld</Button>
         )}
         {isLive && (
@@ -1080,13 +1080,19 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                     Nog geen scheidsrechters. Voeg een naam toe hierboven.
                   </div>
                 )}
-                {referees.map((ref, idx) => {
+                {[...referees]
+                  .sort((a, b) =>
+                    matches.filter(m => m.referee_id === a.id).length -
+                    matches.filter(m => m.referee_id === b.id).length
+                  )
+                  .map((ref, idx) => {
                   const assignedCount = matches.filter(m => m.referee_id === ref.id).length
+                  const maxCount = Math.max(...referees.map(r => matches.filter(m => m.referee_id === r.id).length), 1)
+                  const barPct = Math.round((assignedCount / maxCount) * 100)
                   const refUrl = typeof window !== 'undefined'
                     ? `${window.location.origin}/ref/${ref.id}/${ref.token}`
                     : ''
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
-
 
                   return (
                     <div key={ref.id}
@@ -1095,10 +1101,21 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                       {/* Hoofdrij */}
                       <div className="px-4 py-3 flex items-center gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-sm truncate">{ref.name}</p>
-                          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                            {assignedCount === 0 ? 'Geen wedstrijden' : `${assignedCount} wedstrijd${assignedCount !== 1 ? 'en' : ''}`}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-sm truncate">{ref.name}</p>
+                            <span className="text-xs font-bold px-1.5 py-0.5 rounded-md flex-shrink-0"
+                              style={{
+                                backgroundColor: assignedCount === 0 ? '#ef444415' : '#22c55e20',
+                                color: assignedCount === 0 ? '#ef4444' : '#22c55e',
+                              }}>
+                              {assignedCount}×
+                            </span>
+                          </div>
+                          {/* Mini werklast-balkje */}
+                          <div className="mt-1 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', width: 80 }}>
+                            <div className="h-full rounded-full transition-all duration-300"
+                              style={{ width: `${barPct}%`, backgroundColor: assignedCount === 0 ? '#ef4444' : '#22c55e' }} />
+                          </div>
                         </div>
                         <RefQRButton refUrl={refUrl} qrUrl={qrUrl} refName={ref.name} />
                         <button onClick={() => deleteReferee(ref.id)}
@@ -1344,31 +1361,52 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
             {/* Match cards */}
             <div className="flex flex-col gap-3 mb-4">
-              {currentRound.matches.map(match => {
-                const s = states[match.id]
-                if (!s) return null
-                return (
-                  <MatchCard key={match.id} match={match} s={s}
-                    matchMinutes={tournament?.match_duration_minutes ?? 10}
-                    expectedTime={roundTimeMap[match.round ?? 0]}
-                    referees={referees}
-                    onUpd={p => upd(match.id, p)}
-                    onSaveScore={() => saveScore(match)}
-                    onSave={status => saveMatch(match, status)}
-                    onAssignRef={refId => assignReferee(match.id, refId)}
-                  />
+              {(() => {
+                const prevBlocked = rounds.some(r =>
+                  r.round < currentRound.round &&
+                  r.matches.some(m => m.status === 'live' || m.status === 'scheduled')
                 )
-              })}
+                return currentRound.matches.map(match => {
+                  const s = states[match.id]
+                  if (!s) return null
+                  return (
+                    <MatchCard key={match.id} match={match} s={s}
+                      matchMinutes={tournament?.match_duration_minutes ?? 10}
+                      expectedTime={roundTimeMap[match.round ?? 0]}
+                      referees={referees}
+                      canStart={!prevBlocked}
+                      onUpd={p => upd(match.id, p)}
+                      onSaveScore={() => saveScore(match)}
+                      onSave={status => saveMatch(match, status)}
+                      onAssignRef={refId => assignReferee(match.id, refId)}
+                    />
+                  )
+                })
+              })()}
             </div>
 
             {/* ── BIG round action button ── */}
-            {crScheduled.length > 0 && (
-              <button onClick={() => startRound(currentRound.matches)} disabled={roundSaving}
-                className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
-                style={{ padding: '18px 24px', backgroundColor: 'var(--orange)', color: '#fff', fontSize: '17px' }}>
-                {roundSaving ? 'Starten…' : `▶  Start${getRoundPillLabel(currentRound.matches) ? ` ${KO_LABEL[currentRound.matches[0]?.phase] ?? 'ronde'}` : ` ronde ${currentRound.round}`}  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}`}
-              </button>
-            )}
+            {crScheduled.length > 0 && (() => {
+              // Blokkeer starten als een vorige ronde nog live of gepland is
+              const blockedBy = rounds.find(r =>
+                r.round < currentRound.round &&
+                r.matches.some(m => m.status === 'live' || m.status === 'scheduled')
+              )
+              return blockedBy ? (
+                <div className="w-full rounded-2xl text-center py-4 px-5"
+                  style={{ backgroundColor: 'var(--bg-elevated)', border: '2px dashed var(--border)' }}>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    ⏳ Wacht — ronde {blockedBy.round} is nog niet afgerond
+                  </p>
+                </div>
+              ) : (
+                <button onClick={() => startRound(currentRound.matches)} disabled={roundSaving}
+                  className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
+                  style={{ padding: '18px 24px', backgroundColor: 'var(--orange)', color: '#fff', fontSize: '17px' }}>
+                  {roundSaving ? 'Starten…' : `▶  Start${getRoundPillLabel(currentRound.matches) ? ` ${KO_LABEL[currentRound.matches[0]?.phase] ?? 'ronde'}` : ` ronde ${currentRound.round}`}  ·  ${crScheduled.length} veld${crScheduled.length !== 1 ? 'en' : ''}`}
+                </button>
+              )
+            })()}
             {crLive.length > 0 && (
               <button onClick={() => stopRound(currentRound.round, currentRound.matches)} disabled={roundSaving}
                 className="w-full rounded-2xl font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform mt-2"
