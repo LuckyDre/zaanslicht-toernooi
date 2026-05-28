@@ -183,12 +183,13 @@ function LiveCard({ match, s, onUpd, onSave }: {
 export default function RefPage({ params }: { params: Promise<{ id: string; token: string }> }) {
   const { id: refereeId, token } = use(params)
 
-  const [auth, setAuth]           = useState<'loading' | 'ok' | 'denied'>('loading')
-  const [referee, setReferee]     = useState<Referee | null>(null)
-  const [tournament, setTournament] = useState<Tournament | null>(null)
-  const [matches, setMatches]     = useState<FullMatch[]>([])
-  const [allRounds, setAllRounds] = useState<number[]>([])
-  const [scores, setScores]       = useState<Record<string, SS>>({})
+  const [auth, setAuth]               = useState<'loading' | 'ok' | 'denied'>('loading')
+  const [referee, setReferee]         = useState<Referee | null>(null)
+  const [tournament, setTournament]   = useState<Tournament | null>(null)
+  const [matches, setMatches]         = useState<FullMatch[]>([])
+  const [allRounds, setAllRounds]     = useState<number[]>([])
+  const [scores, setScores]           = useState<Record<string, SS>>({})
+  const [thanksDismissed, setThanksDismissed] = useState(false)
 
   // Load referee + validate token
   useEffect(() => {
@@ -273,6 +274,12 @@ export default function RefPage({ params }: { params: Promise<{ id: string; toke
     } else {
       upd(match.id, { saving: false, saved: true })
       setTimeout(() => upd(match.id, { saved: false }), 2000)
+      // Optimistisch updaten zodat bedankscherm direct verschijnt
+      setMatches(prev => prev.map(m =>
+        m.id === match.id
+          ? { ...m, status, home_score: s.home, away_score: s.away }
+          : m
+      ))
     }
   }
 
@@ -313,8 +320,75 @@ export default function RefPage({ params }: { params: Promise<{ id: string; toke
   const finishedMatches  = matches.filter(m => m.status === 'finished')
   const liveCount        = liveMatches.length
 
+  // Alle toegewezen wedstrijden zijn afgerond
+  const allDone = matches.length > 0 && liveMatches.length === 0 && scheduledMatches.length === 0
+
   return (
     <div className="min-h-screen pb-12" style={{ backgroundColor: 'var(--bg-base)' }}>
+
+      {/* ── Bedankscherm ── */}
+      {allDone && !thanksDismissed && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6 gap-5 overflow-y-auto py-10"
+          style={{ background: 'linear-gradient(160deg, #FF6B0008 0%, var(--bg-base) 40%, #22c55e08 100%)' }}>
+
+          {/* Emoji rij */}
+          <div className="flex gap-3 text-4xl select-none">🎉 🏆 🎉</div>
+
+          {/* Hoofdboodschap */}
+          <div className="text-center">
+            <h1 className="text-3xl font-bold mb-1">Bedankt!</h1>
+            <p className="text-xl font-semibold" style={{ color: 'var(--orange)' }}>
+              {referee?.name}
+            </p>
+            <p className="text-sm mt-3 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              Je hebt alle {finishedMatches.length} wedstrijd{finishedMatches.length !== 1 ? 'en' : ''} gefloten
+              {tournament ? ` bij ${tournament.name}` : ''}.
+              <br />Geweldig werk! 👏
+            </p>
+          </div>
+
+          {/* Uitslagen-overzicht */}
+          {finishedMatches.length > 0 && (
+            <div className="w-full max-w-xs rounded-2xl overflow-hidden"
+              style={{ border: '1px solid var(--border)' }}>
+              <div className="px-4 py-2 text-xs font-bold uppercase tracking-wider"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                Jouw uitslagen
+              </div>
+              {finishedMatches.map((m, idx) => (
+                <div key={m.id}
+                  className="flex items-center gap-2 px-3 py-2.5"
+                  style={{ borderTop: idx > 0 ? '1px solid var(--border)' : undefined, backgroundColor: 'var(--bg-card)' }}>
+                  <span className="text-xs w-6 flex-shrink-0 text-center font-bold"
+                    style={{ color: 'var(--text-secondary)' }}>R{m.round}</span>
+                  <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: m.home_team?.color || 'var(--orange)' }} />
+                    <span className="text-xs font-semibold truncate">{m.home_team?.name ?? '—'}</span>
+                  </div>
+                  <span className="text-sm font-bold font-mono flex-shrink-0 px-1"
+                    style={{ color: '#22c55e' }}>
+                    {m.home_score ?? 0}–{m.away_score ?? 0}
+                  </span>
+                  <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0">
+                    <span className="text-xs font-semibold truncate text-right">{m.away_team?.name ?? '—'}</span>
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: m.away_team?.color || '#888' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Sluiten */}
+          <button
+            onClick={() => setThanksDismissed(true)}
+            className="w-full max-w-xs rounded-2xl py-4 font-bold text-base cursor-pointer active:scale-[0.98] transition-transform"
+            style={{ backgroundColor: 'var(--orange)', color: '#fff', touchAction: 'manipulation' }}>
+            👍 Top, klaar!
+          </button>
+        </div>
+      )}
 
       {/* Sticky header */}
       <div className="sticky top-0 z-10 px-4 py-3"
