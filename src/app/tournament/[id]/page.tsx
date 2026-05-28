@@ -239,7 +239,7 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
               onClick={e => e.stopPropagation()}>
               {/* Logo in overlay (custom of Zaans Licht als fallback) */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={tournament.logo_url ?? '/zaanslicht-logo.jpg'} alt="Logo"
+              <img src={tournament.logo_url ?? '/zaanslicht-logo.png'} alt="Logo"
                 className="h-14 w-auto object-contain rounded-xl"
                 style={{ backgroundColor: 'white', padding: 6 }} />
               <div>
@@ -278,7 +278,7 @@ export default function TournamentPage({ params }: { params: Promise<{ id: strin
             <div className="flex items-start gap-3 min-w-0">
               {/* Club logo (custom of Zaans Licht als fallback) */}
               {(() => {
-                const logoSrc = tournament.logo_url ?? '/zaanslicht-logo.jpg'
+                const logoSrc = tournament.logo_url ?? '/zaanslicht-logo.png'
                 return (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={logoSrc} alt="Logo" className="w-12 h-12 rounded-xl object-contain flex-shrink-0"
