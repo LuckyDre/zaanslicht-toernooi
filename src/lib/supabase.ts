@@ -57,10 +57,20 @@ export type Match = {
   finished_at: string | null
   status: 'scheduled' | 'live' | 'finished' | 'cancelled'
   ref_token: string | null
+  referee_id: string | null
   created_at: string
   home_team?: Team
   away_team?: Team
   field?: Field
+  referee?: Referee
+}
+
+export type Referee = {
+  id: string
+  tournament_id: string
+  name: string
+  token: string
+  created_at: string
 }
 
 export type Standing = {

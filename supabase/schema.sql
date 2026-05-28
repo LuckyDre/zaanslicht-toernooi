@@ -192,33 +192,48 @@ begin
 end;
 $$;
 
+-- ── Scheidsrechters tabel ────────────────────────────────────────────────────
+
+create table if not exists referees (
+  id            uuid primary key default gen_random_uuid(),
+  tournament_id uuid references tournaments(id) on delete cascade not null,
+  name          text not null,
+  token         uuid default gen_random_uuid() not null unique,
+  created_at    timestamptz default now()
+);
+
+alter table referees enable row level security;
+create policy "Public read referees"  on referees for select using (true);
+create policy "Admin all referees"    on referees for all    using (auth.role() = 'authenticated');
+
 -- Scheidsrechter past wedstrijduitslag aan (omzeilt RLS via SECURITY DEFINER)
--- Valideert via het eigen ref_token van de wedstrijd.
--- Scores kunnen alleen worden ingevoerd als de wedstrijd live is.
+-- Valideert via het token van de scheidsrechter; wedstrijd moet live zijn.
 create or replace function update_match_as_referee(
-  p_match_id     uuid,
-  p_ref_token    uuid,
-  p_home_score   int,
-  p_away_score   int,
-  p_status       text,
-  p_started_at   timestamptz default null,
-  p_finished_at  timestamptz default null
+  p_match_id    uuid,
+  p_referee_id  uuid,
+  p_ref_token   uuid,   -- referees.token
+  p_home_score  int,
+  p_away_score  int,
+  p_status      text,
+  p_finished_at timestamptz default null
 )
 returns json language plpgsql security definer as $$
 declare
   v_token  uuid;
   v_status text;
+  v_ref_id uuid;
 begin
-  -- Haal het ref_token en de huidige status op voor dit specifieke duel
-  select ref_token, status into v_token, v_status
-  from matches
-  where id = p_match_id;
-
+  -- Controleer scheidsrechter-token
+  select token into v_token from referees where id = p_referee_id;
   if v_token is null or v_token != p_ref_token then
     return json_build_object('success', false, 'error', 'Ongeldige scheidsrechterscode');
   end if;
 
-  -- Scores mogen alleen worden ingevoerd als de wedstrijd live is
+  -- Controleer toewijzing en status
+  select status, referee_id into v_status, v_ref_id from matches where id = p_match_id;
+  if v_ref_id is distinct from p_referee_id then
+    return json_build_object('success', false, 'error', 'Wedstrijd niet aan jou toegewezen');
+  end if;
   if v_status != 'live' then
     return json_build_object('success', false, 'error', 'Wedstrijd is nog niet gestart');
   end if;
@@ -243,3 +258,16 @@ alter table tournaments add column if not exists ref_token uuid default gen_rand
 
 -- Migratie: voeg ref_token toe aan bestaande wedstrijden
 alter table matches add column if not exists ref_token uuid default gen_random_uuid();
+
+-- Migratie: scheidsrechters + koppeling aan wedstrijden
+create table if not exists referees (
+  id            uuid primary key default gen_random_uuid(),
+  tournament_id uuid references tournaments(id) on delete cascade not null,
+  name          text not null,
+  token         uuid default gen_random_uuid() not null unique,
+  created_at    timestamptz default now()
+);
+alter table referees enable row level security;
+create policy if not exists "Public read referees" on referees for select using (true);
+create policy if not exists "Admin all referees"   on referees for all    using (auth.role() = 'authenticated');
+alter table matches add column if not exists referee_id uuid references referees(id) on delete set null;

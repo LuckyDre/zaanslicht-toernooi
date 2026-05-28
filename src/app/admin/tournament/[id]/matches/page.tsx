@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, use, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { supabase, Match, Tournament, Standing, Field } from '@/lib/supabase'
+import { supabase, Match, Tournament, Standing, Field, Referee } from '@/lib/supabase'
 import { Navbar } from '@/components/ui/Navbar'
 import { Button } from '@/components/ui/Button'
 import { BracketOverlay } from '@/components/admin/BracketOverlay'
@@ -149,17 +149,67 @@ function RoundPill({ n, label, time, status, selected, onClick }: {
   )
 }
 
+// ─── Scheidsrechter QR-knop (in de scheidsrechters-lijst) ────────────────────
+function RefQRButton({ refUrl, qrUrl, refName }: { refUrl: string; qrUrl: string; refName: string }) {
+  const [open, setOpen]     = useState(false)
+  const [copied, setCopied] = useState(false)
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold cursor-pointer active:scale-95 flex-shrink-0"
+        style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+        title="Toon scheidsrechter link">
+        📱 Link
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setOpen(false)}>
+          <div className="w-full max-w-sm rounded-3xl p-6 flex flex-col items-center gap-4"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between w-full">
+              <div>
+                <h3 className="font-bold text-base">📱 {refName}</h3>
+                <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Scan of deel deze link</p>
+              </div>
+              <button onClick={() => setOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer flex-shrink-0"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>✕</button>
+            </div>
+            <div className="rounded-2xl overflow-hidden" style={{ border: '2px solid var(--border)' }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={qrUrl} alt="QR" width={200} height={200} />
+            </div>
+            <div className="w-full rounded-2xl px-3 py-2 text-xs font-mono text-center"
+              style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+              {refUrl}
+            </div>
+            <button
+              onClick={async () => { await navigator.clipboard.writeText(refUrl); setCopied(true); setTimeout(() => setCopied(false), 2500) }}
+              className="w-full rounded-2xl py-3 font-bold text-sm cursor-pointer transition-all active:scale-[0.98]"
+              style={{ backgroundColor: copied ? '#22c55e' : 'var(--orange)', color: '#fff' }}>
+              {copied ? '✓ Gekopieerd!' : '📋 Kopieer link'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 // ─── Match card ──────────────────────────────────────────────────────────────
 function MatchCard({
-  match, s, matchMinutes, expectedTime, onUpd, onSaveScore, onSave,
+  match, s, matchMinutes, expectedTime, referees, onUpd, onSaveScore, onSave, onAssignRef,
 }: {
   match: Match; s: MS; matchMinutes: number; expectedTime?: string | null
+  referees: Referee[]
   onUpd: (p: Partial<MS>) => void
   onSaveScore: () => void
   onSave: (status: Match['status']) => void
+  onAssignRef: (refereeId: string | null) => void
 }) {
-  const [showRefQR, setShowRefQR] = useState(false)
-  const [refCopied, setRefCopied] = useState(false)
+  const [showAssign, setShowAssign] = useState(false)
 
   const isLive      = match.status === 'live'
   const isDone      = match.status === 'finished'
@@ -172,9 +222,7 @@ function MatchCard({
   const statusLabel = isLive ? '● LIVE' : isDone ? '✓ Gespeeld' : isCancelled ? '✕ Afgelast' : 'Gepland'
   const statusColor = isLive ? 'var(--orange)' : isDone ? '#22c55e' : isCancelled ? '#ef4444' : 'var(--text-secondary)'
 
-  const refUrl = match.ref_token && typeof window !== 'undefined'
-    ? `${window.location.origin}/ref/${match.id}/${match.ref_token}`
-    : null
+  const assignedRef = referees.find(r => r.id === match.referee_id) ?? null
 
   return (
     <>
@@ -195,16 +243,6 @@ function MatchCard({
           )}
           {s.saved  && <span className="text-xs font-medium" style={{ color: '#22c55e' }}>✓</span>}
           {s.error  && <span className="text-xs" style={{ color: '#ef4444' }}>⚠</span>}
-          {/* 📱 Scheids knop — alleen zichtbaar als het duel een eigen token heeft */}
-          {refUrl && !isCancelled && (
-            <button
-              onClick={() => setShowRefQR(true)}
-              title="Scheidsrechter link"
-              className="w-6 h-6 rounded-md flex items-center justify-center text-xs cursor-pointer active:scale-90"
-              style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)' }}>
-              📱
-            </button>
-          )}
           <span className="text-xs font-bold" style={{ color: statusColor }}>{statusLabel}</span>
         </div>
       </div>
@@ -285,6 +323,25 @@ function MatchCard({
         )}
       </div>
 
+      {/* ── Scheids-toewijzingsrij ── */}
+      {!isCancelled && (
+        <div className="flex items-center gap-2 px-4 pb-2 pt-0">
+          <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>👤</span>
+          {assignedRef ? (
+            <span className="text-xs font-semibold flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+              {assignedRef.name}
+            </span>
+          ) : (
+            <span className="text-xs flex-1" style={{ color: 'var(--text-secondary)' }}>Geen scheids</span>
+          )}
+          <button onClick={() => setShowAssign(true)}
+            className="text-xs px-2 py-0.5 rounded-lg cursor-pointer flex-shrink-0 active:scale-95"
+            style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+            {assignedRef ? 'Wijzig' : '+ Toewijzen'}
+          </button>
+        </div>
+      )}
+
       <div className="flex gap-2 px-4 pb-4">
         {isScheduled && (
           <Button size="sm" loading={s.saving} onClick={() => onSave('live')} className="flex-1">▶ Start dit veld</Button>
@@ -308,63 +365,56 @@ function MatchCard({
       </div>
     </div>
 
-    {/* ── Per-match scheidsrechter QR-overlay ── */}
-    {showRefQR && refUrl && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        style={{ backgroundColor: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
-        onClick={() => setShowRefQR(false)}>
-        <div className="w-full max-w-sm rounded-3xl p-6 flex flex-col items-center gap-4"
+    {/* ── Scheids toewijzen bottom-sheet ── */}
+    {showAssign && (
+      <div className="fixed inset-0 z-50 flex items-end justify-center"
+        style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}
+        onClick={() => setShowAssign(false)}>
+        <div className="w-full max-w-lg rounded-t-3xl px-5 pt-5 pb-8 flex flex-col gap-3"
           style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
           onClick={e => e.stopPropagation()}>
-
-          {/* Header */}
-          <div className="flex items-start justify-between w-full gap-3">
+          <div className="flex items-center justify-between mb-1">
             <div>
-              <h3 className="font-bold text-base">📱 Scheidsrechter link</h3>
+              <h3 className="font-bold text-base">👤 Scheids toewijzen</h3>
               <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
                 {match.field?.name ?? `Wedstrijd ${match.match_number}`}
                 {' · '}
                 {match.home_team?.name ?? '?'} vs {match.away_team?.name ?? '?'}
               </p>
             </div>
-            <button onClick={() => setShowRefQR(false)}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-sm cursor-pointer flex-shrink-0"
-              style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
-              ✕
-            </button>
+            <button onClick={() => setShowAssign(false)}
+              className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>✕</button>
           </div>
-
-          <p className="text-sm text-center" style={{ color: 'var(--text-secondary)' }}>
-            Deel deze link met de scheidsrechter. Invoer is alleen mogelijk als de wedstrijd live is.
-          </p>
-
-          {/* QR code */}
-          <div className="rounded-2xl overflow-hidden" style={{ border: '2px solid var(--border)' }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`}
-              alt="QR scheidsrechter"
-              width={220} height={220}
-            />
-          </div>
-
-          {/* URL pill */}
-          <div className="w-full rounded-2xl px-3 py-2 text-xs font-mono text-center"
-            style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
-            {refUrl}
-          </div>
-
-          {/* Copy button */}
+          {/* Geen scheids */}
           <button
-            onClick={async () => {
-              await navigator.clipboard.writeText(refUrl)
-              setRefCopied(true)
-              setTimeout(() => setRefCopied(false), 2500)
-            }}
-            className="w-full rounded-2xl py-3 font-bold text-sm cursor-pointer transition-all active:scale-[0.98]"
-            style={{ backgroundColor: refCopied ? '#22c55e' : 'var(--orange)', color: '#fff' }}>
-            {refCopied ? '✓ Gekopieerd!' : '📋 Kopieer link'}
+            onClick={() => { onAssignRef(null); setShowAssign(false) }}
+            className="w-full px-4 py-3 rounded-2xl text-sm font-semibold text-left cursor-pointer active:scale-[0.98] transition-transform"
+            style={{
+              backgroundColor: !match.referee_id ? 'var(--orange)' : 'var(--bg-elevated)',
+              color: !match.referee_id ? '#fff' : 'var(--text-secondary)',
+              border: `1.5px solid ${!match.referee_id ? 'var(--orange)' : 'var(--border)'}`,
+            }}>
+            Geen scheids
           </button>
+          {referees.length === 0 && (
+            <p className="text-xs text-center py-2" style={{ color: 'var(--text-secondary)' }}>
+              Nog geen scheidsrechters aangemaakt. Voeg ze toe in het Scheidsrechters-blok.
+            </p>
+          )}
+          {/* Referee list */}
+          {referees.map(r => (
+            <button key={r.id}
+              onClick={() => { onAssignRef(r.id); setShowAssign(false) }}
+              className="w-full px-4 py-3 rounded-2xl text-sm font-semibold text-left cursor-pointer active:scale-[0.98] transition-transform"
+              style={{
+                backgroundColor: match.referee_id === r.id ? 'var(--orange)' : 'var(--bg-elevated)',
+                color: match.referee_id === r.id ? '#fff' : 'var(--text-primary)',
+                border: `1.5px solid ${match.referee_id === r.id ? 'var(--orange)' : 'var(--border)'}`,
+              }}>
+              {r.name}
+            </button>
+          ))}
         </div>
       </div>
     )}
@@ -390,6 +440,10 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showTimeline, setShowTimeline]   = useState(false)
   const [editStartTime, setEditStartTime] = useState('')
   const [savingTime, setSavingTime]       = useState(false)
+  const [referees, setReferees]           = useState<Referee[]>([])
+  const [showReferees, setShowReferees]   = useState(false)
+  const [newRefName, setNewRefName]       = useState('')
+  const [addingRef, setAddingRef]         = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -399,6 +453,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     supabase.from('tournaments').select('*').eq('id', id).single().then(({ data }) => setTournament(data))
     supabase.from('standings').select('*').eq('tournament_id', id).then(({ data }) => setStandings(data ?? []))
     supabase.from('fields').select('*').eq('tournament_id', id).order('display_order').then(({ data }) => setFields(data ?? []))
+    supabase.from('referees').select('*').eq('tournament_id', id).order('created_at').then(({ data }) => setReferees(data ?? []))
 
     supabase.from('matches')
       .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*), field:fields(*)')
@@ -444,6 +499,33 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       return next
     })
     return data
+  }
+
+  // ── Scheidsrechters beheer ───────────────────────────────────────────────────
+  const reloadReferees = async () => {
+    const { data } = await supabase.from('referees').select('*').eq('tournament_id', id).order('created_at')
+    setReferees(data ?? [])
+  }
+
+  const addReferee = async () => {
+    const name = newRefName.trim()
+    if (!name) return
+    setAddingRef(true)
+    await supabase.from('referees').insert({ tournament_id: id, name })
+    setNewRefName('')
+    setAddingRef(false)
+    reloadReferees()
+  }
+
+  const deleteReferee = async (refId: string) => {
+    if (!confirm('Scheidsrechter verwijderen? Wedstrijden worden losgekoppeld.')) return
+    await supabase.from('referees').delete().eq('id', refId)
+    reloadReferees()
+  }
+
+  const assignReferee = async (matchId: string, refId: string | null) => {
+    await supabase.from('matches').update({ referee_id: refId }).eq('id', matchId)
+    setMatches(prev => prev.map(m => m.id === matchId ? { ...m, referee_id: refId } : m))
   }
 
   const saveMatch = async (match: Match, status: Match['status']) => {
@@ -915,6 +997,81 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             )}
           </div>
 
+          {/* ── Scheidsrechters sectie ── */}
+          <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+            <button
+              onClick={() => setShowReferees(r => !r)}
+              className="w-full flex items-center justify-between px-4 py-3 cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-card)' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold">👤 Scheidsrechters</span>
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                  style={{ backgroundColor: referees.length > 0 ? '#FF6B0020' : 'var(--bg-elevated)', color: referees.length > 0 ? 'var(--orange)' : 'var(--text-secondary)' }}>
+                  {referees.length}
+                </span>
+              </div>
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{showReferees ? '▲' : '▼'}</span>
+            </button>
+
+            {showReferees && (
+              <div style={{ borderTop: '1px solid var(--border)' }}>
+                {/* Scheidsrechter toevoegen */}
+                <div className="px-4 py-3 flex items-center gap-2"
+                  style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
+                  <input
+                    type="text"
+                    placeholder="Naam scheidsrechter…"
+                    value={newRefName}
+                    onChange={e => setNewRefName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addReferee()}
+                    className="flex-1 rounded-lg px-2 py-1 text-sm outline-none"
+                    style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                  />
+                  <button onClick={addReferee} disabled={addingRef || !newRefName.trim()}
+                    className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-40"
+                    style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>
+                    {addingRef ? '…' : '+ Voeg toe'}
+                  </button>
+                </div>
+
+                {/* Lijst van scheidsrechters */}
+                {referees.length === 0 && (
+                  <div className="px-4 py-5 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    Nog geen scheidsrechters. Voeg een naam toe hierboven.
+                  </div>
+                )}
+                {referees.map((ref, idx) => {
+                  const assignedCount = matches.filter(m => m.referee_id === ref.id).length
+                  const refUrl = typeof window !== 'undefined'
+                    ? `${window.location.origin}/ref/${ref.id}/${ref.token}`
+                    : ''
+                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
+                  return (
+                    <div key={ref.id}
+                      className="px-4 py-3 flex items-center gap-3"
+                      style={{ borderTop: idx > 0 ? '1px solid var(--border)' : undefined, backgroundColor: 'var(--bg-card)' }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm truncate">{ref.name}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                          {assignedCount === 0 ? 'Geen wedstrijden toegewezen' : `${assignedCount} wedstrijd${assignedCount !== 1 ? 'en' : ''}`}
+                        </p>
+                      </div>
+                      {/* QR/link popup */}
+                      <RefQRButton refUrl={refUrl} qrUrl={qrUrl} refName={ref.name} />
+                      {/* Verwijder */}
+                      <button onClick={() => deleteReferee(ref.id)}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-xs cursor-pointer active:scale-90 flex-shrink-0"
+                        style={{ backgroundColor: '#ef444415', color: '#ef4444', border: '1px solid #ef444430' }}
+                        title="Verwijder scheidsrechter">
+                        ✕
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {/* ── Tournament winner banner ── */}
           {tournamentWinner && (
             <div className="rounded-2xl p-5 text-center mb-5"
@@ -1019,9 +1176,11 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                   <MatchCard key={match.id} match={match} s={s}
                     matchMinutes={tournament?.match_duration_minutes ?? 10}
                     expectedTime={roundTimeMap[match.round ?? 0]}
+                    referees={referees}
                     onUpd={p => upd(match.id, p)}
                     onSaveScore={() => saveScore(match)}
                     onSave={status => saveMatch(match, status)}
+                    onAssignRef={refId => assignReferee(match.id, refId)}
                   />
                 )
               })}
