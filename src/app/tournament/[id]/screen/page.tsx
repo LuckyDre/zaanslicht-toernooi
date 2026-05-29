@@ -118,47 +118,47 @@ function StandingTable({ poolStandings, poolName }: { poolStandings: Standing[];
   return (
     <div className="rounded-2xl overflow-hidden flex-shrink-0"
       style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
-      <div className="px-4 py-2" style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
-        <span className="font-black" style={{ color: 'var(--orange)', fontSize: 'clamp(0.85rem, 1.6vw, 1.4rem)' }}>
+      <div className="px-4 py-2.5" style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+        <span className="font-black" style={{ color: 'var(--orange)', fontSize: 'clamp(1rem, 1.8vw, 1.6rem)' }}>
           🏆 {poolName}
         </span>
       </div>
       <table className="w-full">
         <thead>
-          <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 'clamp(0.7rem, 1.2vw, 1rem)' }}>
-            <th className="text-left px-3 py-2 font-semibold w-7">#</th>
-            <th className="text-left px-3 py-2 font-semibold">Team</th>
-            <th className="text-center px-2 py-2 font-semibold">G</th>
-            <th className="text-center px-2 py-2 font-semibold">W</th>
-            <th className="text-center px-2 py-2 font-semibold">V</th>
-            <th className="text-center px-2 py-2 font-semibold">Dlt</th>
-            <th className="text-center px-2 py-2 font-semibold">Pts</th>
+          <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 'clamp(0.8rem, 1.35vw, 1.15rem)' }}>
+            <th className="text-left px-3 py-2.5 font-semibold w-8">#</th>
+            <th className="text-left px-3 py-2.5 font-semibold">Team</th>
+            <th className="text-center px-2 py-2.5 font-semibold">G</th>
+            <th className="text-center px-2 py-2.5 font-semibold">W</th>
+            <th className="text-center px-2 py-2.5 font-semibold">V</th>
+            <th className="text-center px-2 py-2.5 font-semibold">Dlt</th>
+            <th className="text-center px-2 py-2.5 font-semibold">Pts</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((s, i) => (
             <tr key={s.team_id} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
-              <td className="px-3 py-2 font-bold text-center"
-                style={{ color: i === 0 ? 'var(--orange)' : 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>
+              <td className="px-3 py-2.5 font-bold text-center"
+                style={{ color: i === 0 ? 'var(--orange)' : 'var(--text-secondary)', fontSize: 'clamp(0.85rem, 1.35vw, 1.15rem)' }}>
                 {i + 1}
               </td>
-              <td className="px-3 py-2">
+              <td className="px-3 py-2.5">
                 <div className="flex items-center gap-2">
                   <span className="rounded-full flex-shrink-0"
-                    style={{ width: 'clamp(8px, 1.1vw, 14px)', height: 'clamp(8px, 1.1vw, 14px)', backgroundColor: s.team?.color ?? 'var(--orange)', display: 'inline-block' }} />
-                  <span className="font-bold truncate" style={{ fontSize: 'clamp(0.8rem, 1.4vw, 1.2rem)' }}>
+                    style={{ width: 'clamp(10px, 1.3vw, 16px)', height: 'clamp(10px, 1.3vw, 16px)', backgroundColor: s.team?.color ?? 'var(--orange)', display: 'inline-block' }} />
+                  <span className="font-bold truncate" style={{ fontSize: 'clamp(0.9rem, 1.6vw, 1.4rem)' }}>
                     {s.team?.name ?? '—'}
                   </span>
                 </div>
               </td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>{s.played}</td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>{s.won}</td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>{s.lost}</td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.7rem, 1.1vw, 0.95rem)' }}>
+              <td className="px-2 py-2.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.85rem, 1.35vw, 1.15rem)' }}>{s.played}</td>
+              <td className="px-2 py-2.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.85rem, 1.35vw, 1.15rem)' }}>{s.won}</td>
+              <td className="px-2 py-2.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.85rem, 1.35vw, 1.15rem)' }}>{s.lost}</td>
+              <td className="px-2 py-2.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.8rem, 1.25vw, 1.05rem)' }}>
                 {s.goals_for}–{s.goals_against}
               </td>
-              <td className="px-2 py-2 text-center font-black tabular-nums"
-                style={{ color: 'var(--text-primary)', fontSize: 'clamp(0.9rem, 1.6vw, 1.4rem)' }}>
+              <td className="px-2 py-2.5 text-center font-black tabular-nums"
+                style={{ color: 'var(--text-primary)', fontSize: 'clamp(1rem, 1.8vw, 1.6rem)' }}>
                 {s.points}
               </td>
             </tr>
@@ -446,16 +446,16 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
           </div>
         )}
 
-        {/* ── Groepsfase rij 1: wedstrijdkaarten — max 50% schermhoogte ── */}
+        {/* ── Groepsfase rij 1: wedstrijdkaarten — vast 50vh ── */}
         {activePools.length > 0 && (
           <div className="flex flex-shrink-0 overflow-hidden"
-            style={{ maxHeight: '50vh', gap: 'clamp(6px, 1.2vw, 18px)' }}>
+            style={{ height: '50vh', gap: 'clamp(6px, 1.2vw, 18px)' }}>
             {activePools.map(pool => {
               const poolMs = displayMatches.filter(m =>
                 m.phase === 'group' && (m.home_team?.pool === pool || m.away_team?.pool === pool)
               )
               return (
-                <div key={pool} className="flex flex-1 min-w-0"
+                <div key={pool} className="flex flex-1 min-w-0 h-full"
                   style={{ gap: 'clamp(6px, 1vw, 14px)' }}>
                   {poolMs.map(m => (
                     <MatchCard
@@ -470,10 +470,10 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
           </div>
         )}
 
-        {/* ── Groepsfase rij 2: standingstabellen — vult resterende ruimte ── */}
+        {/* ── Groepsfase rij 2: standingstabellen — vast 40vh ── */}
         {activePools.length > 0 && (
-          <div className="flex flex-1 min-h-0"
-            style={{ gap: 'clamp(6px, 1.2vw, 18px)', alignItems: 'flex-start' }}>
+          <div className="flex flex-shrink-0 overflow-hidden"
+            style={{ height: '40vh', gap: 'clamp(6px, 1.2vw, 18px)', alignItems: 'flex-start' }}>
             {activePools.map(pool => {
               const poolSts = standingsByPool[pool] ?? []
               return poolSts.length > 0 ? (
