@@ -888,26 +888,42 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     setSavingTime(false); setEditStartTime('')
   }
 
-  // ─── Logo uploaden ──────────────────────────────────────────────────────────
+  // ─── Logo uploaden (canvas-compressie → data-URL → direct in DB) ────────────
   const uploadLogo = async (file: File) => {
     if (!tournament) return
     setLogoUploading(true); setLogoMsg(null)
-    const ext  = file.name.split('.').pop()?.toLowerCase() ?? 'png'
-    const path = `${tournament.id}/logo.${ext}`
-    const { error: upErr } = await supabase.storage
-      .from('logos').upload(path, file, { upsert: true, contentType: file.type })
-    if (upErr) {
-      setLogoMsg({ ok: false, text: `Upload mislukt: ${upErr.message}` })
-      setLogoUploading(false); return
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onerror = reject
+        reader.onload = e => {
+          const img = new Image()
+          img.onerror = reject
+          img.onload = () => {
+            const MAX = 400
+            const ratio = Math.min(MAX / img.width, MAX / img.height, 1)
+            const w = Math.round(img.width * ratio)
+            const h = Math.round(img.height * ratio)
+            const canvas = document.createElement('canvas')
+            canvas.width = w; canvas.height = h
+            canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+            resolve(canvas.toDataURL('image/png', 0.92))
+          }
+          img.src = e.target!.result as string
+        }
+        reader.readAsDataURL(file)
+      })
+      const { error } = await supabase.from('tournaments')
+        .update({ logo_url: dataUrl }).eq('id', tournament.id)
+      if (error) throw error
+      setTournament(prev => prev ? { ...prev, logo_url: dataUrl } : prev)
+      setLogoMsg({ ok: true, text: 'Logo opgeslagen ✓' })
+      setTimeout(() => setLogoMsg(null), 3000)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Onbekende fout'
+      setLogoMsg({ ok: false, text: `Mislukt: ${msg}` })
     }
-    const { data: { publicUrl } } = supabase.storage.from('logos').getPublicUrl(path)
-    // Voeg cache-busting toe zodat de browser de nieuwe versie toont
-    const busted = `${publicUrl}?t=${Date.now()}`
-    await supabase.from('tournaments').update({ logo_url: busted }).eq('id', tournament.id)
-    setTournament(prev => prev ? { ...prev, logo_url: busted } : prev)
-    setLogoMsg({ ok: true, text: 'Logo opgeslagen ✓' })
     setLogoUploading(false)
-    setTimeout(() => setLogoMsg(null), 3000)
   }
 
   const removeLogo = async () => {
