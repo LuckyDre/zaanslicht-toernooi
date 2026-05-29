@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo, use, useCallback } from 'react'
+import { useEffect, useState, useMemo, use, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Tournament, Match, Standing } from '@/lib/supabase'
 
@@ -196,6 +196,16 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading]       = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // ── Fase-machine ──────────────────────────────────────────────────────────────
+  // preview    : voor het toernooi begint — volgende geplande ronde zichtbaar
+  // live       : een ronde is bezig of net afgelopen — blijft tonen totdat nieuwe start
+  // announcing : overgang tussen rondes — 10-seconden countdown venster
+  type Phase = 'preview' | 'live' | 'announcing'
+  const [phase, setPhaseState] = useState<Phase>('preview')
+  const phaseRef = useRef<Phase>('preview')
+  const setPhase = useCallback((p: Phase) => { phaseRef.current = p; setPhaseState(p) }, [])
+  const [countdown, setCountdown] = useState(10)
+
   type GoalNotif = {
     id: string; teamName: string; teamColor: string
     homeTeamName: string; awayTeamName: string
@@ -229,9 +239,14 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
         .select('*, team:teams(*)')
         .eq('tournament_id', id),
     ]).then(([t, m, s]) => {
+      const matchData = m.data ?? []
       setTournament(t.data)
-      setMatches(m.data ?? [])
+      setMatches(matchData)
       setStandings(s.data ?? [])
+      // Als er al live wedstrijden zijn (pagina-reload midden in een ronde), ga direct naar live-fase
+      if (matchData.some(x => x.status === 'live')) {
+        setPhase('live')
+      }
       setLoading(false)
     })
   }, [id])
@@ -243,6 +258,22 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     return () => clearTimeout(t)
   }, [goalNotif])
 
+  // Countdown voor nieuwe-ronde aankondiging (10 → 0, dan naar live-fase)
+  useEffect(() => {
+    if (phase !== 'announcing') return
+    setCountdown(10)
+    let n = 10
+    const id = setInterval(() => {
+      n -= 1
+      setCountdown(n)
+      if (n <= 0) {
+        clearInterval(id)
+        setPhase('live')
+      }
+    }, 1000)
+    return () => clearInterval(id)
+  }, [phase, setPhase])
+
   // Realtime
   useEffect(() => {
     if (!id) return
@@ -253,6 +284,8 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
           const m = updated as Match
           setMatches(prev => {
             const old = prev.find(p => p.id === m.id)
+
+            // Doelpunt-detectie (ongewijzigd)
             if (
               old && old.status === 'live' && m.status === 'live' &&
               ((m.home_score ?? 0) > (old.home_score ?? 0) ||
@@ -269,8 +302,22 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
                 awayScore:    m.away_score ?? 0,
               })
             }
+
+            // Nieuwe ronde detectie: wedstrijd gaat van scheduled → live
+            if (old && old.status === 'scheduled' && m.status === 'live') {
+              if (phaseRef.current === 'preview') {
+                // Allereerste ronde start — direct live, geen aankondiging
+                setPhase('live')
+              } else if (phaseRef.current === 'live') {
+                // Nieuwe ronde terwijl vorige nog zichtbaar was → aankondiging tonen
+                setPhase('announcing')
+              }
+            }
+
             return prev.map(p =>
-              p.id === m.id ? { ...p, ...m, home_team: p.home_team, away_team: p.away_team, field: p.field } : p
+              p.id === m.id
+                ? { ...p, ...m, home_team: p.home_team, away_team: p.away_team, field: p.field, referee: p.referee }
+                : p
             )
           })
         })
@@ -288,13 +335,29 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
   const scheduledMatches = useMemo(() => matches.filter(m => m.status === 'scheduled'), [matches])
 
   const displayMatches = useMemo(() => {
-    if (liveMatches.length > 0) return liveMatches
-    if (scheduledMatches.length > 0) {
+    if (phase === 'preview') {
+      // Nog niets gespeeld — toon volgende geplande ronde als voorbeeld
+      if (liveMatches.length > 0) return liveMatches
+      if (scheduledMatches.length === 0) return []
       const minRound = Math.min(...scheduledMatches.map(x => x.round ?? 0))
       return scheduledMatches.filter(m => (m.round ?? 0) === minRound)
     }
+    if (phase === 'announcing') {
+      // Aankondigingsvenster: toon de ZOJUIST GESPEELDE (finished) ronde op de achtergrond
+      const finished = matches.filter(m => m.status === 'finished')
+      if (finished.length === 0) return []
+      const maxRound = Math.max(...finished.map(m => m.round ?? 0))
+      return finished.filter(m => (m.round ?? 0) === maxRound)
+    }
+    // live-fase: toon huidige live wedstrijden; als die klaar zijn, blijf de laatste finished ronde tonen
+    if (liveMatches.length > 0) return liveMatches
+    const finished = matches.filter(m => m.status === 'finished')
+    if (finished.length > 0) {
+      const maxRound = Math.max(...finished.map(m => m.round ?? 0))
+      return finished.filter(m => (m.round ?? 0) === maxRound)
+    }
     return []
-  }, [liveMatches, scheduledMatches])
+  }, [phase, liveMatches, scheduledMatches, matches])
 
   // Stand per poule
   const standingsByPool = useMemo(() => {
@@ -340,6 +403,37 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
   return (
     <div className="flex flex-col overflow-hidden"
       style={{ height: '100dvh', backgroundColor: 'var(--bg-base)', userSelect: 'none' }}>
+
+      {/* ── Nieuwe-ronde aankondiging (10s countdown) ── */}
+      {phase === 'announcing' && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.88)', animation: 'goalIn 0.4s ease-out' }}>
+          <div className="flex flex-col items-center gap-5 text-center"
+            style={{ padding: 'clamp(2rem, 5vw, 5rem) clamp(3rem, 8vw, 8rem)' }}>
+            <div style={{ fontSize: 'clamp(2.5rem, 8vw, 6rem)' }}>🏁</div>
+            <p className="font-black"
+              style={{ fontSize: 'clamp(1.8rem, 5vw, 4rem)', color: 'var(--orange)' }}>
+              Nieuwe ronde begint!
+            </p>
+            <p className="font-semibold"
+              style={{ fontSize: 'clamp(1rem, 2.2vw, 2rem)', color: 'var(--text-secondary)' }}>
+              Wedstrijden gaan zo beginnen…
+            </p>
+            {/* Countdown cirkel */}
+            <div className="rounded-full flex items-center justify-center font-black"
+              style={{
+                width:  'clamp(70px, 12vw, 120px)',
+                height: 'clamp(70px, 12vw, 120px)',
+                backgroundColor: 'var(--orange)',
+                fontSize: 'clamp(2rem, 5vw, 4rem)',
+                color: 'white',
+                boxShadow: '0 0 40px rgba(255,107,0,0.5)',
+              }}>
+              {countdown}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Doelpunt-popup ── */}
       {goalNotif && (
