@@ -48,12 +48,29 @@ function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
       }}>
 
       {/* Veld-header */}
-      <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0"
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 flex-shrink-0"
         style={{ backgroundColor: isLive ? '#FF6B0022' : 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
-        <span className="font-bold truncate"
+        {/* Links: veldnaam */}
+        <span className="font-bold truncate flex-shrink-0"
           style={{ fontSize: 'clamp(0.65rem, 1.1vw, 1rem)', color: isLive ? 'var(--orange)' : 'var(--text-secondary)' }}>
           {isLive ? '● ' : ''}{fieldName}{phaseLabel ? ` · ${phaseLabel}` : ''}
         </span>
+        {/* Midden: begintijd + scheidsrechter */}
+        <div className="flex items-center gap-2 overflow-hidden">
+          {(match.scheduled_at || match.started_at) && (
+            <span className="font-semibold flex-shrink-0"
+              style={{ fontSize: 'clamp(0.65rem, 1.1vw, 1rem)', color: 'var(--text-secondary)' }}>
+              🕐 {new Date(match.started_at ?? match.scheduled_at!).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          {match.referee?.name && (
+            <span className="font-semibold truncate"
+              style={{ fontSize: 'clamp(0.65rem, 1.1vw, 1rem)', color: 'var(--text-secondary)' }}>
+              🟡 {match.referee.name}
+            </span>
+          )}
+        </div>
+        {/* Rechts: status */}
         {isDone && <span className="font-bold flex-shrink-0" style={{ fontSize: 'clamp(0.6rem, 1vw, 0.85rem)', color: '#22c55e' }}>✓ Gespeeld</span>}
       </div>
 
@@ -206,7 +223,7 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     Promise.all([
       supabase.from('tournaments').select('*').eq('id', id).single(),
       supabase.from('matches')
-        .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*), field:fields(*)')
+        .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*), field:fields(*), referee:referees(*)')
         .eq('tournament_id', id).order('round').order('match_number'),
       supabase.from('standings')
         .select('*, team:teams(*)')
