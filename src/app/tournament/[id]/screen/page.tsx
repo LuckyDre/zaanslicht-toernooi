@@ -32,11 +32,13 @@ const KO_LABEL: Partial<Record<Match['phase'], string>> = {
   final: 'Finale', third_place: '3e plaats',
 }
 
-// ── TV-Wedstrijdkaart ──────────────────────────────────────────────────────────
+// ── TV-Wedstrijdkaart (verticaal scorebord) ────────────────────────────────────
 function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
   const isLive = match.status === 'live'
   const isDone = match.status === 'finished'
   const phaseLabel = match.phase !== 'group' ? KO_LABEL[match.phase] : null
+  const scoreColor = isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-primary)'
+  const dotSize = 'clamp(10px, 1.6vw, 20px)'
 
   return (
     <div className="flex flex-col rounded-2xl overflow-hidden w-full h-full min-h-0"
@@ -49,61 +51,54 @@ function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
       <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0"
         style={{ backgroundColor: isLive ? '#FF6B0022' : 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
         <span className="font-bold truncate"
-          style={{ fontSize: 'clamp(0.65rem, 1.2vw, 1rem)', color: isLive ? 'var(--orange)' : 'var(--text-secondary)' }}>
+          style={{ fontSize: 'clamp(0.65rem, 1.1vw, 1rem)', color: isLive ? 'var(--orange)' : 'var(--text-secondary)' }}>
           {isLive ? '● ' : ''}{fieldName}{phaseLabel ? ` · ${phaseLabel}` : ''}
         </span>
-        {isDone && <span className="font-bold flex-shrink-0" style={{ fontSize: 'clamp(0.6rem, 1vw, 0.9rem)', color: '#22c55e' }}>✓ Gespeeld</span>}
+        {isDone && <span className="font-bold flex-shrink-0" style={{ fontSize: 'clamp(0.6rem, 1vw, 0.85rem)', color: '#22c55e' }}>✓ Gespeeld</span>}
       </div>
 
-      {/* Score-sectie: vult de rest */}
-      <div className="flex-1 flex items-center gap-2 px-3 py-2 min-h-0 overflow-hidden">
+      {/* Verticaal scorebord: thuis bovenaan, uit onderaan */}
+      <div className="flex-1 flex flex-col items-center justify-center min-h-0 overflow-hidden"
+        style={{ padding: 'clamp(6px, 1.2vh, 18px) clamp(10px, 2vw, 28px)', gap: 0 }}>
 
-        {/* Thuisteam */}
-        <div className="flex-1 flex flex-col items-center justify-center gap-1.5 min-w-0">
+        {/* Thuisteam naam */}
+        <div className="flex items-center justify-center gap-2 w-full">
           <div className="rounded-full flex-shrink-0"
-            style={{
-              width: 'clamp(14px, 2.5vw, 28px)',
-              height: 'clamp(14px, 2.5vw, 28px)',
-              backgroundColor: match.home_team?.color ?? 'var(--orange)',
-            }} />
-          <span className="font-black text-center leading-tight break-words w-full text-center"
-            style={{ fontSize: 'clamp(0.85rem, 2.2vw, 2.2rem)', lineHeight: 1.1 }}>
+            style={{ width: dotSize, height: dotSize, backgroundColor: match.home_team?.color ?? 'var(--orange)' }} />
+          <span className="font-black text-center leading-tight truncate"
+            style={{ fontSize: 'clamp(1rem, 2.8vw, 2.8rem)', lineHeight: 1.1, color: 'var(--text-primary)' }}>
             {match.home_team?.name ?? '—'}
           </span>
         </div>
 
-        {/* Grote score */}
-        <div className="flex-shrink-0 flex flex-col items-center justify-center gap-0">
-          <span className="font-black tabular-nums leading-none"
-            style={{
-              fontSize: 'clamp(2.5rem, 7vw, 7rem)',
-              color: isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-primary)',
-            }}>
-            {match.home_score ?? 0}
-          </span>
-          <span className="font-bold leading-none"
-            style={{ fontSize: 'clamp(1rem, 2vw, 2rem)', color: 'var(--text-secondary)', lineHeight: 0.8 }}>
-            –
-          </span>
-          <span className="font-black tabular-nums leading-none"
-            style={{
-              fontSize: 'clamp(2.5rem, 7vw, 7rem)',
-              color: isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-primary)',
-            }}>
-            {match.away_score ?? 0}
-          </span>
-        </div>
+        {/* Thuisscore */}
+        <span className="font-black tabular-nums leading-none text-center"
+          style={{ fontSize: 'clamp(3.5rem, 10vw, 10rem)', color: scoreColor, lineHeight: 0.95 }}>
+          {match.home_score ?? 0}
+        </span>
 
-        {/* Uitteam */}
-        <div className="flex-1 flex flex-col items-center justify-center gap-1.5 min-w-0">
+        {/* Scheidingsstreep */}
+        <div className="flex-shrink-0 rounded-full"
+          style={{
+            width: 'clamp(40px, 8vw, 100px)',
+            height: 3,
+            backgroundColor: scoreColor,
+            opacity: 0.5,
+            margin: 'clamp(4px, 0.8vh, 10px) 0',
+          }} />
+
+        {/* Uitscore */}
+        <span className="font-black tabular-nums leading-none text-center"
+          style={{ fontSize: 'clamp(3.5rem, 10vw, 10rem)', color: scoreColor, lineHeight: 0.95 }}>
+          {match.away_score ?? 0}
+        </span>
+
+        {/* Uitteam naam */}
+        <div className="flex items-center justify-center gap-2 w-full">
           <div className="rounded-full flex-shrink-0"
-            style={{
-              width: 'clamp(14px, 2.5vw, 28px)',
-              height: 'clamp(14px, 2.5vw, 28px)',
-              backgroundColor: match.away_team?.color ?? '#888',
-            }} />
-          <span className="font-black text-center leading-tight break-words w-full text-center"
-            style={{ fontSize: 'clamp(0.85rem, 2.2vw, 2.2rem)', lineHeight: 1.1 }}>
+            style={{ width: dotSize, height: dotSize, backgroundColor: match.away_team?.color ?? '#888' }} />
+          <span className="font-black text-center leading-tight truncate"
+            style={{ fontSize: 'clamp(1rem, 2.8vw, 2.8rem)', lineHeight: 1.1, color: 'var(--text-primary)' }}>
             {match.away_team?.name ?? '—'}
           </span>
         </div>
@@ -118,47 +113,47 @@ function StandingTable({ poolStandings, poolName }: { poolStandings: Standing[];
   return (
     <div className="rounded-2xl overflow-hidden flex-shrink-0"
       style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
-      <div className="px-3 py-1.5" style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
-        <span className="font-black" style={{ color: 'var(--orange)', fontSize: 'clamp(0.75rem, 1.3vw, 1.1rem)' }}>
+      <div className="px-4 py-2" style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+        <span className="font-black" style={{ color: 'var(--orange)', fontSize: 'clamp(0.85rem, 1.6vw, 1.4rem)' }}>
           🏆 {poolName}
         </span>
       </div>
       <table className="w-full">
         <thead>
-          <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 'clamp(0.6rem, 1vw, 0.85rem)' }}>
-            <th className="text-left px-2 py-1 font-semibold w-5">#</th>
-            <th className="text-left px-2 py-1 font-semibold">Team</th>
-            <th className="text-center px-1.5 py-1 font-semibold">G</th>
-            <th className="text-center px-1.5 py-1 font-semibold">W</th>
-            <th className="text-center px-1.5 py-1 font-semibold">V</th>
-            <th className="text-center px-1.5 py-1 font-semibold">Dlt</th>
-            <th className="text-center px-1.5 py-1 font-semibold">Pts</th>
+          <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 'clamp(0.7rem, 1.2vw, 1rem)' }}>
+            <th className="text-left px-3 py-2 font-semibold w-7">#</th>
+            <th className="text-left px-3 py-2 font-semibold">Team</th>
+            <th className="text-center px-2 py-2 font-semibold">G</th>
+            <th className="text-center px-2 py-2 font-semibold">W</th>
+            <th className="text-center px-2 py-2 font-semibold">V</th>
+            <th className="text-center px-2 py-2 font-semibold">Dlt</th>
+            <th className="text-center px-2 py-2 font-semibold">Pts</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((s, i) => (
             <tr key={s.team_id} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
-              <td className="px-2 py-1.5 font-bold text-center"
-                style={{ color: i === 0 ? 'var(--orange)' : 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>
+              <td className="px-3 py-2 font-bold text-center"
+                style={{ color: i === 0 ? 'var(--orange)' : 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>
                 {i + 1}
               </td>
-              <td className="px-2 py-1.5">
-                <div className="flex items-center gap-1.5">
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-2">
                   <span className="rounded-full flex-shrink-0"
-                    style={{ width: 10, height: 10, backgroundColor: s.team?.color ?? 'var(--orange)', display: 'inline-block' }} />
-                  <span className="font-bold truncate" style={{ fontSize: 'clamp(0.7rem, 1.2vw, 1rem)' }}>
+                    style={{ width: 'clamp(8px, 1.1vw, 14px)', height: 'clamp(8px, 1.1vw, 14px)', backgroundColor: s.team?.color ?? 'var(--orange)', display: 'inline-block' }} />
+                  <span className="font-bold truncate" style={{ fontSize: 'clamp(0.8rem, 1.4vw, 1.2rem)' }}>
                     {s.team?.name ?? '—'}
                   </span>
                 </div>
               </td>
-              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>{s.played}</td>
-              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>{s.won}</td>
-              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>{s.lost}</td>
-              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.6rem, 0.95vw, 0.8rem)' }}>
+              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>{s.played}</td>
+              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>{s.won}</td>
+              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.75rem, 1.2vw, 1.05rem)' }}>{s.lost}</td>
+              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.7rem, 1.1vw, 0.95rem)' }}>
                 {s.goals_for}–{s.goals_against}
               </td>
-              <td className="px-1.5 py-1.5 text-center font-black tabular-nums"
-                style={{ color: 'var(--text-primary)', fontSize: 'clamp(0.75rem, 1.3vw, 1.1rem)' }}>
+              <td className="px-2 py-2 text-center font-black tabular-nums"
+                style={{ color: 'var(--text-primary)', fontSize: 'clamp(0.9rem, 1.6vw, 1.4rem)' }}>
                 {s.points}
               </td>
             </tr>
