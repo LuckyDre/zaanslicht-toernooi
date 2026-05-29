@@ -446,39 +446,41 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
           </div>
         )}
 
-        {/* ── Groepsfase: per poule een kolom ── */}
+        {/* ── Groepsfase rij 1: wedstrijdkaarten — max 50% schermhoogte ── */}
         {activePools.length > 0 && (
-          <div className="flex-1 flex min-h-0 gap-3"
-            style={{ gap: 'clamp(6px, 1.2vw, 18px)' }}>
-
+          <div className="flex flex-shrink-0 overflow-hidden"
+            style={{ maxHeight: '50vh', gap: 'clamp(6px, 1.2vw, 18px)' }}>
             {activePools.map(pool => {
-              const poolMs  = displayMatches.filter(m =>
+              const poolMs = displayMatches.filter(m =>
                 m.phase === 'group' && (m.home_team?.pool === pool || m.away_team?.pool === pool)
               )
-              const poolSts = standingsByPool[pool] ?? []
-
               return (
-                <div key={pool} className="flex-1 flex flex-col min-h-0 min-w-0"
-                  style={{ gap: 'clamp(6px, 1vh, 12px)' }}>
-
-                  {/* Wedstrijden in deze poule: altijd in een rij naast elkaar */}
-                  <div className="flex min-h-0 flex-1"
-                    style={{ gap: 'clamp(6px, 1vw, 14px)' }}>
-                    {poolMs.map(m => (
-                      <MatchCard
-                        key={m.id}
-                        match={m}
-                        fieldName={m.field?.name ?? `Wedstrijd ${m.match_number}`}
-                      />
-                    ))}
-                  </div>
-
-                  {/* Stand onder de wedstrijden */}
-                  {poolSts.length > 0 && (
-                    <StandingTable poolStandings={poolSts} poolName={poolName(pool)} />
-                  )}
+                <div key={pool} className="flex flex-1 min-w-0"
+                  style={{ gap: 'clamp(6px, 1vw, 14px)' }}>
+                  {poolMs.map(m => (
+                    <MatchCard
+                      key={m.id}
+                      match={m}
+                      fieldName={m.field?.name ?? `Wedstrijd ${m.match_number}`}
+                    />
+                  ))}
                 </div>
               )
+            })}
+          </div>
+        )}
+
+        {/* ── Groepsfase rij 2: standingstabellen — vult resterende ruimte ── */}
+        {activePools.length > 0 && (
+          <div className="flex flex-1 min-h-0"
+            style={{ gap: 'clamp(6px, 1.2vw, 18px)', alignItems: 'flex-start' }}>
+            {activePools.map(pool => {
+              const poolSts = standingsByPool[pool] ?? []
+              return poolSts.length > 0 ? (
+                <div key={pool} className="flex-1 min-w-0">
+                  <StandingTable poolStandings={poolSts} poolName={poolName(pool)} />
+                </div>
+              ) : null
             })}
           </div>
         )}
