@@ -455,6 +455,8 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showLogo, setShowLogo]           = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
   const [logoMsg, setLogoMsg]             = useState<{ ok: boolean; text: string } | null>(null)
+  // blockedRounds: per scheids-ID een Set van ronde-nummers waarvoor ze niet beschikbaar zijn
+  const [blockedRounds, setBlockedRounds] = useState<Record<string, Set<number>>>({})
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -517,6 +519,36 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       .subscribe()
     return () => { supabase.removeChannel(sub) }
   }, [id])
+
+  // ── Geblokkeerde rondes per scheids (localStorage) ───────────────────────────
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`blocked_${id}`)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Record<string, number[]>
+      const sets: Record<string, Set<number>> = {}
+      Object.entries(parsed).forEach(([refId, rounds]) => { sets[refId] = new Set(rounds) })
+      setBlockedRounds(sets)
+    } catch { /* ignore */ }
+  }, [id])
+
+  useEffect(() => {
+    try {
+      const serial: Record<string, number[]> = {}
+      Object.entries(blockedRounds).forEach(([refId, s]) => { if (s.size > 0) serial[refId] = [...s] })
+      localStorage.setItem(`blocked_${id}`, JSON.stringify(serial))
+    } catch { /* ignore */ }
+  }, [blockedRounds, id])
+
+  const toggleBlock = (refId: string, roundNum: number) => {
+    setBlockedRounds(prev => {
+      const next = { ...prev }
+      const s = new Set(next[refId] ?? [])
+      if (s.has(roundNum)) s.delete(roundNum); else s.add(roundNum)
+      next[refId] = s
+      return next
+    })
+  }
 
   const upd = (matchId: string, p: Partial<MS>) =>
     setStates(prev => ({ ...prev, [matchId]: { ...prev[matchId], ...p } }))
@@ -607,12 +639,19 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       const usedInRound = new Set<string>()
 
       for (const m of roundMs) {
-        // Voorkeur: scheids die de vorige ronde NIET heeft gefloten (pauze gehad)
+        // Geblokkeerde scheids nooit inplannen voor deze ronde
+        const notBlocked = (r: Referee) => !(blockedRounds[r.id]?.has(roundNum))
+
+        // Voorkeur: scheids vrij + niet vorige ronde gefloten (pauze)
         let available = referees.filter(r =>
-          !usedInRound.has(r.id) &&
+          !usedInRound.has(r.id) && notBlocked(r) &&
           (prevRound === null || lastWorkedRound[r.id] !== prevRound)
         )
-        // Fallback: niet genoeg uitgeruste scheids → gebruik iedereen die nog vrij is
+        // Fallback 1: pauze-eis laten vallen, maar geblokkeerde nog steeds overslaan
+        if (!available.length) {
+          available = referees.filter(r => !usedInRound.has(r.id) && notBlocked(r))
+        }
+        // Fallback 2: iedereen vrij (alle constraints los — laatste redmiddel)
         if (!available.length) {
           available = referees.filter(r => !usedInRound.has(r.id))
         }
@@ -1312,6 +1351,35 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                           ✕
                         </button>
                       </div>
+                      {/* Beschikbaarheid: blokkeer rondes */}
+                      {rounds.length > 0 && (
+                        <div className="px-4 pb-2 flex items-start gap-2">
+                          <span className="text-[11px] font-semibold flex-shrink-0 pt-0.5"
+                            style={{ color: 'var(--text-secondary)', minWidth: 44 }}>
+                            Blok:
+                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {rounds.map(({ round: rn, matches: rm }) => {
+                              const isBlocked = blockedRounds[ref.id]?.has(rn) ?? false
+                              const pill = getRoundPillLabel(rm)
+                              return (
+                                <button key={rn} onClick={() => toggleBlock(ref.id, rn)}
+                                  title={isBlocked ? `Ronde ${rn} geblokkeerd — klik om vrij te geven` : `Klik om ronde ${rn} te blokkeren`}
+                                  className="text-[11px] px-1.5 py-0.5 rounded-md cursor-pointer active:scale-95 font-semibold transition-colors select-none"
+                                  style={{
+                                    backgroundColor: isBlocked ? '#ef444422' : 'var(--bg-elevated)',
+                                    color: isBlocked ? '#ef4444' : 'var(--text-secondary)',
+                                    border: `1px solid ${isBlocked ? '#ef444455' : 'var(--border)'}`,
+                                    textDecoration: isBlocked ? 'line-through' : 'none',
+                                  }}>
+                                  {pill ?? `R${rn}`}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Rooster: per veld alle rondes zichtbaar, geen inklapmenu */}
                       {fields.length > 0 && (
                         <div className="px-4 pb-3 flex flex-col gap-1.5">
@@ -1330,15 +1398,15 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                                 {/* Ronde-pills rechts, wrappend */}
                                 <div className="flex flex-wrap gap-1">
                                   {fieldMs.map(m => {
+                                    const isBlockedRound = blockedRounds[ref.id]?.has(m.round) ?? false
                                     const isMine  = m.referee_id === ref.id
                                     const isOther = m.referee_id !== null && !isMine
                                     const other   = isOther ? referees.find(r => r.id === m.referee_id) : null
                                     const pill    = getRoundPillLabel(rounds.find(r => r.round === m.round)?.matches ?? [])
 
                                     const handleClick = async () => {
-                                      // Toewijzen of verwijderen
+                                      if (isBlockedRound) return // geblokkeerde ronde → geen actie
                                       const newRefId = isMine ? null : ref.id
-                                      // Dubbelboeking voorkomen: verwijder scheids uit andere velden in dezelfde ronde
                                       const conflicts = newRefId !== null
                                         ? matches.filter(x => x.id !== m.id && x.round === m.round && x.referee_id === ref.id)
                                         : []
@@ -1358,12 +1426,15 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                                     return (
                                       <button key={m.id} onClick={handleClick}
                                         title={
-                                          isOther ? `Nu: ${other?.name ?? '?'} — klik om over te nemen`
+                                          isBlockedRound ? `Ronde geblokkeerd voor ${ref.name}`
+                                          : isOther ? `Nu: ${other?.name ?? '?'} — klik om over te nemen`
                                           : isMine ? 'Klik = pauze geven'
                                           : 'Klik = toewijzen'
                                         }
-                                        className="text-[11px] px-1.5 py-0.5 rounded-md cursor-pointer active:scale-95 font-semibold transition-colors"
+                                        className="text-[11px] px-1.5 py-0.5 rounded-md font-semibold transition-colors"
                                         style={{
+                                          cursor: isBlockedRound ? 'not-allowed' : 'pointer',
+                                          opacity: isBlockedRound ? 0.35 : 1,
                                           backgroundColor: isMine ? '#22c55e20' : isOther ? '#ef444415' : 'var(--bg-elevated)',
                                           color: isMine ? '#22c55e' : isOther ? '#ef4444' : 'var(--text-secondary)',
                                           border: `1px solid ${isMine ? '#22c55e50' : isOther ? '#ef444435' : 'var(--border)'}`,
