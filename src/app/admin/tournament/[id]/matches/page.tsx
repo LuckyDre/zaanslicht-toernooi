@@ -590,25 +590,40 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
       roundGroups[r].push(m)
     })
 
-    // Greedy verdeling: geef elke ronde de scheids met de minste wedstrijden die nog vrij is
+    // Greedy verdeling met pauze-voorkeur:
+    // 1. Kies bij voorkeur een scheids die de vorige ronde vrij was (pauze)
+    // 2. Als dat niet lukt (te weinig scheids), mag iemand twee rondes op rij
     const counts: Record<string, number> = {}
-    referees.forEach(r => { counts[r.id] = 0 })
+    const lastWorkedRound: Record<string, number | null> = {}
+    referees.forEach(r => { counts[r.id] = 0; lastWorkedRound[r.id] = null })
 
+    const sortedRoundNums = Object.keys(roundGroups).map(Number).sort((a, b) => a - b)
     const updates: { id: string; refId: string }[] = []
 
-    for (const roundNum of Object.keys(roundGroups).map(Number).sort((a, b) => a - b)) {
-      const roundMs  = roundGroups[roundNum]
+    for (let ri = 0; ri < sortedRoundNums.length; ri++) {
+      const roundNum  = sortedRoundNums[ri]
+      const prevRound = ri > 0 ? sortedRoundNums[ri - 1] : null
+      const roundMs   = roundGroups[roundNum]
       const usedInRound = new Set<string>()
 
       for (const m of roundMs) {
-        const available = referees.filter(r => !usedInRound.has(r.id))
-        if (!available.length) break // meer velden dan scheidsrechters in deze ronde
+        // Voorkeur: scheids die de vorige ronde NIET heeft gefloten (pauze gehad)
+        let available = referees.filter(r =>
+          !usedInRound.has(r.id) &&
+          (prevRound === null || lastWorkedRound[r.id] !== prevRound)
+        )
+        // Fallback: niet genoeg uitgeruste scheids → gebruik iedereen die nog vrij is
+        if (!available.length) {
+          available = referees.filter(r => !usedInRound.has(r.id))
+        }
+        if (!available.length) break // meer velden dan scheidsrechters
 
-        // Kies de scheids met de laagste werklast
+        // Kies de scheids met de laagste werklast (bij gelijkspel: eerste in lijst)
         const best = available.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b)
         updates.push({ id: m.id, refId: best.id })
         counts[best.id]++
         usedInRound.add(best.id)
+        lastWorkedRound[best.id] = roundNum
       }
     }
 
