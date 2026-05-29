@@ -57,12 +57,12 @@ function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
         {isDone && <span className="font-bold flex-shrink-0" style={{ fontSize: 'clamp(0.6rem, 1vw, 0.85rem)', color: '#22c55e' }}>✓ Gespeeld</span>}
       </div>
 
-      {/* Verticaal scorebord: thuis bovenaan, uit onderaan */}
-      <div className="flex-1 flex flex-col items-center justify-center min-h-0 overflow-hidden"
-        style={{ padding: 'clamp(6px, 1.2vh, 18px) clamp(10px, 2vw, 28px)', gap: 0 }}>
+      {/* Verticaal scorebord: naam bovenaan, naam onderaan, scores in het midden */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden"
+        style={{ padding: 'clamp(6px, 1.2vh, 16px) clamp(10px, 2vw, 28px)' }}>
 
-        {/* Thuisteam naam */}
-        <div className="flex items-center justify-center gap-2 w-full">
+        {/* Thuisteam naam — vastgepind bovenaan */}
+        <div className="flex items-center justify-center gap-2 flex-shrink-0">
           <div className="rounded-full flex-shrink-0"
             style={{ width: dotSize, height: dotSize, backgroundColor: match.home_team?.color ?? 'var(--orange)' }} />
           <span className="font-black text-center leading-tight truncate"
@@ -71,30 +71,35 @@ function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
           </span>
         </div>
 
-        {/* Thuisscore */}
-        <span className="font-black tabular-nums leading-none text-center"
-          style={{ fontSize: 'clamp(3.5rem, 10vw, 10rem)', color: scoreColor, lineHeight: 0.95 }}>
-          {match.home_score ?? 0}
-        </span>
+        {/* Thuisscore — vult de ruimte, uitgelijnd naar onderen */}
+        <div className="flex-1 flex items-end justify-center min-h-0" style={{ paddingBottom: 'clamp(2px, 0.4vh, 6px)' }}>
+          <span className="font-black tabular-nums leading-none"
+            style={{ fontSize: 'clamp(3rem, 9vw, 9rem)', color: scoreColor, lineHeight: 1 }}>
+            {match.home_score ?? 0}
+          </span>
+        </div>
 
-        {/* Scheidingsstreep */}
-        <div className="flex-shrink-0 rounded-full"
-          style={{
-            width: 'clamp(40px, 8vw, 100px)',
-            height: 3,
-            backgroundColor: scoreColor,
-            opacity: 0.5,
-            margin: 'clamp(4px, 0.8vh, 10px) 0',
-          }} />
+        {/* Scheidingsstreep — midden */}
+        <div className="flex justify-center flex-shrink-0">
+          <div className="rounded-full"
+            style={{
+              width: 'clamp(40px, 8vw, 100px)',
+              height: 3,
+              backgroundColor: scoreColor,
+              opacity: 0.45,
+            }} />
+        </div>
 
-        {/* Uitscore */}
-        <span className="font-black tabular-nums leading-none text-center"
-          style={{ fontSize: 'clamp(3.5rem, 10vw, 10rem)', color: scoreColor, lineHeight: 0.95 }}>
-          {match.away_score ?? 0}
-        </span>
+        {/* Uitscore — vult de ruimte, uitgelijnd naar boven */}
+        <div className="flex-1 flex items-start justify-center min-h-0" style={{ paddingTop: 'clamp(2px, 0.4vh, 6px)' }}>
+          <span className="font-black tabular-nums leading-none"
+            style={{ fontSize: 'clamp(3rem, 9vw, 9rem)', color: scoreColor, lineHeight: 1 }}>
+            {match.away_score ?? 0}
+          </span>
+        </div>
 
-        {/* Uitteam naam */}
-        <div className="flex items-center justify-center gap-2 w-full">
+        {/* Uitteam naam — vastgepind onderaan */}
+        <div className="flex items-center justify-center gap-2 flex-shrink-0">
           <div className="rounded-full flex-shrink-0"
             style={{ width: dotSize, height: dotSize, backgroundColor: match.away_team?.color ?? '#888' }} />
           <span className="font-black text-center leading-tight truncate"
