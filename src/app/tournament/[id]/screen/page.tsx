@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState, useMemo, use } from 'react'
+import { useEffect, useState, useMemo, use, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Tournament, Match, Standing } from '@/lib/supabase'
 
-// ── Klok ─────────────────────────────────────────────────────────────────────
+// ── Klok ──────────────────────────────────────────────────────────────────────
 function Clock() {
   const [time, setTime] = useState(new Date())
   useEffect(() => {
@@ -18,7 +18,7 @@ function Clock() {
   )
 }
 
-// ── Sortering stand ───────────────────────────────────────────────────────────
+// ── Sortering stand ────────────────────────────────────────────────────────────
 function sortStanding(a: Standing, b: Standing) {
   if (b.points !== a.points) return b.points - a.points
   const gdA = a.goals_for - a.goals_against, gdB = b.goals_for - b.goals_against
@@ -26,63 +26,84 @@ function sortStanding(a: Standing, b: Standing) {
   return b.goals_for - a.goals_for
 }
 
-// ── KO-labels ─────────────────────────────────────────────────────────────────
+// ── KO-labels ──────────────────────────────────────────────────────────────────
 const KO_LABEL: Partial<Record<Match['phase'], string>> = {
   quarter_final: 'Kwartfinale', semi_final: 'Halve finale',
   final: 'Finale', third_place: '3e plaats',
 }
 
-// ── Wedstrijdkaart ────────────────────────────────────────────────────────────
+// ── TV-Wedstrijdkaart ──────────────────────────────────────────────────────────
 function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
   const isLive = match.status === 'live'
   const isDone = match.status === 'finished'
   const phaseLabel = match.phase !== 'group' ? KO_LABEL[match.phase] : null
 
   return (
-    <div className="rounded-2xl overflow-hidden flex flex-col"
+    <div className="flex flex-col rounded-2xl overflow-hidden w-full h-full min-h-0"
       style={{
-        border: `2px solid ${isLive ? 'var(--orange)' : isDone ? '#22c55e55' : 'var(--border)'}`,
+        border: `2px solid ${isLive ? 'var(--orange)' : isDone ? '#22c55e44' : 'var(--border)'}`,
         backgroundColor: isLive ? '#FF6B000D' : 'var(--bg-card)',
-        minWidth: 0,
       }}>
-      {/* Veld + fase header */}
-      <div className="px-4 py-2 flex items-center justify-between gap-2"
+
+      {/* Veld-header */}
+      <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0"
         style={{ backgroundColor: isLive ? '#FF6B0022' : 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
-        <span className="font-bold text-sm truncate" style={{ color: isLive ? 'var(--orange)' : 'var(--text-secondary)' }}>
+        <span className="font-bold truncate"
+          style={{ fontSize: 'clamp(0.65rem, 1.2vw, 1rem)', color: isLive ? 'var(--orange)' : 'var(--text-secondary)' }}>
           {isLive ? '● ' : ''}{fieldName}{phaseLabel ? ` · ${phaseLabel}` : ''}
         </span>
-        {isDone && <span className="text-xs font-bold" style={{ color: '#22c55e' }}>✓ Gespeeld</span>}
+        {isDone && <span className="font-bold flex-shrink-0" style={{ fontSize: 'clamp(0.6rem, 1vw, 0.9rem)', color: '#22c55e' }}>✓ Gespeeld</span>}
       </div>
 
-      {/* Score */}
-      <div className="px-4 py-5 flex items-center gap-3">
+      {/* Score-sectie: vult de rest */}
+      <div className="flex-1 flex items-center gap-2 px-3 py-2 min-h-0 overflow-hidden">
+
         {/* Thuisteam */}
-        <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
-          <div className="w-5 h-5 rounded-full flex-shrink-0"
-            style={{ backgroundColor: match.home_team?.color ?? 'var(--orange)' }} />
-          <span className="font-bold text-center leading-tight text-base md:text-lg truncate w-full text-center">
+        <div className="flex-1 flex flex-col items-center justify-center gap-1.5 min-w-0">
+          <div className="rounded-full flex-shrink-0"
+            style={{
+              width: 'clamp(14px, 2.5vw, 28px)',
+              height: 'clamp(14px, 2.5vw, 28px)',
+              backgroundColor: match.home_team?.color ?? 'var(--orange)',
+            }} />
+          <span className="font-black text-center leading-tight break-words w-full text-center"
+            style={{ fontSize: 'clamp(0.85rem, 2.2vw, 2.2rem)', lineHeight: 1.1 }}>
             {match.home_team?.name ?? '—'}
           </span>
         </div>
 
-        {/* Score midden */}
-        <div className="flex-shrink-0 flex flex-col items-center">
+        {/* Grote score */}
+        <div className="flex-shrink-0 flex flex-col items-center justify-center gap-0">
           <span className="font-black tabular-nums leading-none"
-            style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-secondary)' }}>
+            style={{
+              fontSize: 'clamp(2.5rem, 7vw, 7rem)',
+              color: isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-primary)',
+            }}>
             {match.home_score ?? 0}
           </span>
-          <span className="text-sm font-bold" style={{ color: 'var(--text-secondary)' }}>–</span>
+          <span className="font-bold leading-none"
+            style={{ fontSize: 'clamp(1rem, 2vw, 2rem)', color: 'var(--text-secondary)', lineHeight: 0.8 }}>
+            –
+          </span>
           <span className="font-black tabular-nums leading-none"
-            style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-secondary)' }}>
+            style={{
+              fontSize: 'clamp(2.5rem, 7vw, 7rem)',
+              color: isLive ? 'var(--orange)' : isDone ? '#22c55e' : 'var(--text-primary)',
+            }}>
             {match.away_score ?? 0}
           </span>
         </div>
 
         {/* Uitteam */}
-        <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
-          <div className="w-5 h-5 rounded-full flex-shrink-0"
-            style={{ backgroundColor: match.away_team?.color ?? '#888' }} />
-          <span className="font-bold text-center leading-tight text-base md:text-lg truncate w-full text-center">
+        <div className="flex-1 flex flex-col items-center justify-center gap-1.5 min-w-0">
+          <div className="rounded-full flex-shrink-0"
+            style={{
+              width: 'clamp(14px, 2.5vw, 28px)',
+              height: 'clamp(14px, 2.5vw, 28px)',
+              backgroundColor: match.away_team?.color ?? '#888',
+            }} />
+          <span className="font-black text-center leading-tight break-words w-full text-center"
+            style={{ fontSize: 'clamp(0.85rem, 2.2vw, 2.2rem)', lineHeight: 1.1 }}>
             {match.away_team?.name ?? '—'}
           </span>
         </div>
@@ -91,49 +112,53 @@ function MatchCard({ match, fieldName }: { match: Match; fieldName: string }) {
   )
 }
 
-// ── Mini-stand tabel ──────────────────────────────────────────────────────────
+// ── Stand-tabel ────────────────────────────────────────────────────────────────
 function StandingTable({ poolStandings, poolName }: { poolStandings: Standing[]; poolName: string }) {
   const sorted = [...poolStandings].sort(sortStanding)
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
-      <div className="px-4 py-2" style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
-        <span className="font-bold text-sm" style={{ color: 'var(--orange)' }}>🏆 {poolName}</span>
+    <div className="rounded-2xl overflow-hidden flex-shrink-0"
+      style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+      <div className="px-3 py-1.5" style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+        <span className="font-black" style={{ color: 'var(--orange)', fontSize: 'clamp(0.75rem, 1.3vw, 1.1rem)' }}>
+          🏆 {poolName}
+        </span>
       </div>
-      <table className="w-full text-sm">
+      <table className="w-full">
         <thead>
-          <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)' }}>
-            <th className="text-left px-3 py-1.5 font-semibold w-6">#</th>
-            <th className="text-left px-2 py-1.5 font-semibold">Team</th>
-            <th className="text-center px-2 py-1.5 font-semibold w-7">G</th>
-            <th className="text-center px-2 py-1.5 font-semibold w-7">W</th>
-            <th className="text-center px-2 py-1.5 font-semibold w-7">V</th>
-            <th className="text-center px-2 py-1.5 font-semibold w-10">Dlt</th>
-            <th className="text-center px-2 py-1.5 font-semibold w-8">Pts</th>
+          <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 'clamp(0.6rem, 1vw, 0.85rem)' }}>
+            <th className="text-left px-2 py-1 font-semibold w-5">#</th>
+            <th className="text-left px-2 py-1 font-semibold">Team</th>
+            <th className="text-center px-1.5 py-1 font-semibold">G</th>
+            <th className="text-center px-1.5 py-1 font-semibold">W</th>
+            <th className="text-center px-1.5 py-1 font-semibold">V</th>
+            <th className="text-center px-1.5 py-1 font-semibold">Dlt</th>
+            <th className="text-center px-1.5 py-1 font-semibold">Pts</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((s, i) => (
-            <tr key={s.team_id}
-              style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
-              <td className="px-3 py-2 font-bold text-center text-xs"
-                style={{ color: i === 0 ? 'var(--orange)' : 'var(--text-secondary)' }}>
+            <tr key={s.team_id} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
+              <td className="px-2 py-1.5 font-bold text-center"
+                style={{ color: i === 0 ? 'var(--orange)' : 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>
                 {i + 1}
               </td>
-              <td className="px-2 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: s.team?.color ?? 'var(--orange)' }} />
-                  <span className="font-semibold truncate">{s.team?.name ?? '—'}</span>
+              <td className="px-2 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded-full flex-shrink-0"
+                    style={{ width: 10, height: 10, backgroundColor: s.team?.color ?? 'var(--orange)', display: 'inline-block' }} />
+                  <span className="font-bold truncate" style={{ fontSize: 'clamp(0.7rem, 1.2vw, 1rem)' }}>
+                    {s.team?.name ?? '—'}
+                  </span>
                 </div>
               </td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)' }}>{s.played}</td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)' }}>{s.won}</td>
-              <td className="px-2 py-2 text-center tabular-nums" style={{ color: 'var(--text-secondary)' }}>{s.lost}</td>
-              <td className="px-2 py-2 text-center tabular-nums text-xs" style={{ color: 'var(--text-secondary)' }}>
+              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>{s.played}</td>
+              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>{s.won}</td>
+              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.65rem, 1vw, 0.85rem)' }}>{s.lost}</td>
+              <td className="px-1.5 py-1.5 text-center tabular-nums" style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.6rem, 0.95vw, 0.8rem)' }}>
                 {s.goals_for}–{s.goals_against}
               </td>
-              <td className="px-2 py-2 text-center font-black tabular-nums"
-                style={{ color: 'var(--text-primary)', fontSize: '1rem' }}>
+              <td className="px-1.5 py-1.5 text-center font-black tabular-nums"
+                style={{ color: 'var(--text-primary)', fontSize: 'clamp(0.75rem, 1.3vw, 1.1rem)' }}>
                 {s.points}
               </td>
             </tr>
@@ -144,7 +169,7 @@ function StandingTable({ poolStandings, poolName }: { poolStandings: Standing[];
   )
 }
 
-// ── Hoofdpagina ───────────────────────────────────────────────────────────────
+// ── Hoofdpagina ────────────────────────────────────────────────────────────────
 export default function ScreenPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
 
@@ -152,18 +177,31 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
   const [matches, setMatches]       = useState<Match[]>([])
   const [standings, setStandings]   = useState<Standing[]>([])
   const [loading, setLoading]       = useState(true)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   type GoalNotif = {
-    id: string
-    teamName: string
-    teamColor: string
-    homeTeamName: string
-    awayTeamName: string
-    homeScore: number
-    awayScore: number
+    id: string; teamName: string; teamColor: string
+    homeTeamName: string; awayTeamName: string
+    homeScore: number; awayScore: number
   }
   const [goalNotif, setGoalNotif] = useState<GoalNotif | null>(null)
 
+  // Fullscreen toggle
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handler)
+    return () => document.removeEventListener('fullscreenchange', handler)
+  }, [])
+
+  // Data laden
   useEffect(() => {
     Promise.all([
       supabase.from('tournaments').select('*').eq('id', id).single(),
@@ -181,14 +219,14 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     })
   }, [id])
 
-  // Auto-dismiss goal notificatie na 3 seconden
+  // Auto-dismiss goal notificatie
   useEffect(() => {
     if (!goalNotif) return
     const t = setTimeout(() => setGoalNotif(null), 3000)
     return () => clearTimeout(t)
   }, [goalNotif])
 
-  // Realtime: wedstrijden + standen
+  // Realtime
   useEffect(() => {
     if (!id) return
     const sub = supabase
@@ -198,13 +236,8 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
           const m = updated as Match
           setMatches(prev => {
             const old = prev.find(p => p.id === m.id)
-            // Doelpunt-detectie:
-            // - Wedstrijd was LIVE en blijft LIVE (geen afsluiting)
-            // - Score van één team is gestegen (niet bij starten of afsluiten)
             if (
-              old &&
-              old.status === 'live' &&
-              m.status === 'live' &&
+              old && old.status === 'live' && m.status === 'live' &&
               ((m.home_score ?? 0) > (old.home_score ?? 0) ||
                (m.away_score ?? 0) > (old.away_score ?? 0))
             ) {
@@ -233,19 +266,20 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     return () => { supabase.removeChannel(sub) }
   }, [id])
 
-  // ── Live en geplande wedstrijden ──────────────────────────────────────────
+  // ── Welke wedstrijden tonen ──
   const liveMatches      = useMemo(() => matches.filter(m => m.status === 'live'), [matches])
   const scheduledMatches = useMemo(() => matches.filter(m => m.status === 'scheduled'), [matches])
 
-  // Welke wedstrijden tonen we?
-  const displayMatches = liveMatches.length > 0 ? liveMatches
-    : scheduledMatches.length > 0 ? scheduledMatches.filter(m => {
-        const minRound = Math.min(...scheduledMatches.map(x => x.round ?? 0))
-        return (m.round ?? 0) === minRound
-      })
-    : []
+  const displayMatches = useMemo(() => {
+    if (liveMatches.length > 0) return liveMatches
+    if (scheduledMatches.length > 0) {
+      const minRound = Math.min(...scheduledMatches.map(x => x.round ?? 0))
+      return scheduledMatches.filter(m => (m.round ?? 0) === minRound)
+    }
+    return []
+  }, [liveMatches, scheduledMatches])
 
-  // Groepeer standen per poule
+  // Stand per poule
   const standingsByPool = useMemo(() => {
     const map: Record<number, Standing[]> = {}
     standings.forEach(s => {
@@ -256,7 +290,7 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     return map
   }, [standings])
 
-  // Unieke poules die in de actieve matches voorkomen
+  // Poules die in de actieve matches voorkomen
   const activePools = useMemo(() => {
     const pools = new Set<number>()
     displayMatches.forEach(m => {
@@ -268,12 +302,14 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     return [...pools].sort()
   }, [displayMatches])
 
-  // KO-wedstrijden in de displaylist
-  const koMatches = useMemo(() => displayMatches.filter(m => m.phase !== 'group'), [displayMatches])
-
+  const koMatches  = useMemo(() => displayMatches.filter(m => m.phase !== 'group'), [displayMatches])
   const numPools   = tournament?.num_pools ?? 1
   const poolNames  = tournament?.pool_names
   const poolName   = (p: number) => poolNames?.[p - 1] ?? (numPools > 1 ? `Poule ${String.fromCharCode(64 + p)}` : 'Stand')
+  const allDone    = matches.length > 0 && matches.every(m => m.status === 'finished' || m.status === 'cancelled')
+
+  // ── Match-hoogte: aantal rijen in kolom bepaalt de card-hoogte ──
+  // We gebruiken CSS grid met een vaste hoogte per kolom zodat kaarten altijd maximaal zijn
 
   if (loading) {
     return (
@@ -284,61 +320,68 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
     )
   }
 
-  const allDone = matches.length > 0 && matches.every(m => m.status === 'finished' || m.status === 'cancelled')
-
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--bg-base)' }}>
+    <div className="flex flex-col overflow-hidden"
+      style={{ height: '100dvh', backgroundColor: 'var(--bg-base)', userSelect: 'none' }}>
 
-      {/* ── Doelpunt-notificatie ── */}
+      {/* ── Doelpunt-popup ── */}
       {goalNotif && (
-        <div
-          key={goalNotif.id}
+        <div key={goalNotif.id}
           className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
           style={{ animation: 'goalIn 0.35s ease-out' }}>
-          <div className="rounded-3xl px-10 py-8 flex flex-col items-center gap-3 shadow-2xl"
+          <div className="rounded-3xl flex flex-col items-center gap-3 shadow-2xl"
             style={{
               backgroundColor: goalNotif.teamColor,
               border: '4px solid rgba(255,255,255,0.3)',
-              minWidth: 280,
-              maxWidth: '80vw',
+              padding: 'clamp(1.5rem, 4vw, 3rem) clamp(2rem, 6vw, 5rem)',
             }}>
-            <span className="text-5xl">⚽</span>
+            <span style={{ fontSize: 'clamp(3rem, 8vw, 6rem)' }}>⚽</span>
             <p className="font-black text-white text-center"
-              style={{ fontSize: 'clamp(1.5rem, 4vw, 2.5rem)', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
+              style={{ fontSize: 'clamp(2rem, 6vw, 5rem)', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
               DOELPUNT!
             </p>
             <p className="font-black text-white text-center"
-              style={{ fontSize: 'clamp(1.2rem, 3vw, 2rem)', textShadow: '0 2px 6px rgba(0,0,0,0.3)' }}>
+              style={{ fontSize: 'clamp(1.5rem, 4vw, 3.5rem)', textShadow: '0 2px 6px rgba(0,0,0,0.3)' }}>
               {goalNotif.teamName}
             </p>
             <p className="font-black text-white tabular-nums"
-              style={{ fontSize: 'clamp(1.8rem, 5vw, 3rem)', textShadow: '0 2px 8px rgba(0,0,0,0.4)', opacity: 0.95 }}>
+              style={{ fontSize: 'clamp(2.5rem, 8vw, 6rem)', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
               {goalNotif.homeScore} – {goalNotif.awayScore}
             </p>
-            <p className="text-white text-sm text-center font-semibold"
-              style={{ opacity: 0.8 }}>
+            <p className="text-white font-semibold text-center"
+              style={{ fontSize: 'clamp(0.85rem, 1.5vw, 1.2rem)', opacity: 0.8 }}>
               {goalNotif.homeTeamName} · {goalNotif.awayTeamName}
             </p>
           </div>
         </div>
       )}
 
-      {/* ── Header ── */}
-      <header className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-        style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
-        <div className="flex items-center gap-4">
-          {tournament?.logo_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={tournament.logo_url} alt="Logo" className="h-10 w-10 object-contain" />
-          )}
-          {!tournament?.logo_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/zaanslicht-logo.png" alt="Logo" className="h-10 w-10 object-contain" />
-          )}
-          <div>
-            <h1 className="font-black text-xl leading-tight">{tournament?.name ?? '—'}</h1>
-            <p className="text-xs font-semibold mt-0.5"
-              style={{ color: liveMatches.length > 0 ? 'var(--orange)' : 'var(--text-secondary)' }}>
+      {/* ── Compacte header ── */}
+      <header className="flex items-center justify-between flex-shrink-0 gap-3"
+        style={{
+          padding: 'clamp(6px, 1vh, 12px) clamp(10px, 2vw, 24px)',
+          borderBottom: '1px solid var(--border)',
+          backgroundColor: 'var(--bg-card)',
+          minHeight: 0,
+        }}>
+        {/* Links: logo + naam */}
+        <div className="flex items-center gap-2 min-w-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={tournament?.logo_url ?? '/zaanslicht-logo.png'}
+            alt="Logo"
+            style={{ height: 'clamp(28px, 4vh, 48px)', width: 'clamp(28px, 4vh, 48px)', objectFit: 'contain', flexShrink: 0 }}
+          />
+          <div className="min-w-0">
+            <h1 className="font-black leading-none truncate"
+              style={{ fontSize: 'clamp(0.9rem, 2.2vw, 1.8rem)' }}>
+              {tournament?.name ?? '—'}
+            </h1>
+            <p className="font-semibold leading-none mt-0.5"
+              style={{
+                fontSize: 'clamp(0.6rem, 1.2vw, 0.95rem)',
+                color: liveMatches.length > 0 ? 'var(--orange)' : 'var(--text-secondary)',
+              }}>
               {liveMatches.length > 0
                 ? `● ${liveMatches.length} wedstrijd${liveMatches.length !== 1 ? 'en' : ''} live`
                 : allDone ? '✓ Toernooi afgelopen'
@@ -347,43 +390,90 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
             </p>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-2xl font-black tabular-nums"><Clock /></div>
-          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-            {new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })}
-          </p>
+
+        {/* Rechts: klok + fullscreen */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="text-right">
+            <div className="font-black tabular-nums leading-none"
+              style={{ fontSize: 'clamp(1.2rem, 3vw, 2.4rem)' }}>
+              <Clock />
+            </div>
+            <p style={{ fontSize: 'clamp(0.55rem, 1vw, 0.8rem)', color: 'var(--text-secondary)' }}>
+              {new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </p>
+          </div>
+          <button
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'Volledig scherm verlaten' : 'Volledig scherm'}
+            className="rounded-xl flex items-center justify-center flex-shrink-0 transition-opacity hover:opacity-80 active:opacity-60"
+            style={{
+              width: 'clamp(32px, 4vw, 48px)',
+              height: 'clamp(32px, 4vw, 48px)',
+              backgroundColor: 'var(--bg-elevated)',
+              border: '1px solid var(--border)',
+              fontSize: 'clamp(0.9rem, 1.8vw, 1.4rem)',
+              cursor: 'pointer',
+              color: 'var(--text-primary)',
+            }}>
+            {isFullscreen ? '⛶' : '⛶'}
+          </button>
         </div>
       </header>
 
-      {/* ── Content ── */}
-      <main className="flex-1 px-4 py-6 max-w-7xl mx-auto w-full">
+      {/* ── Hoofdinhoud ── */}
+      <main className="flex-1 flex flex-col min-h-0"
+        style={{ padding: 'clamp(6px, 1vh, 14px) clamp(8px, 1.5vw, 20px)', gap: 'clamp(6px, 1vh, 14px)' }}>
 
-        {/* Geen wedstrijden */}
-        {displayMatches.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-24 gap-4">
-            <div className="text-6xl">{allDone ? '🏆' : '⏳'}</div>
-            <p className="text-2xl font-bold">{allDone ? 'Toernooi afgelopen!' : 'Wacht op de wedstrijden…'}</p>
-            <p className="text-base" style={{ color: 'var(--text-secondary)' }}>
-              {allDone ? 'Bedankt voor het meedoen.' : 'Het toernooi begint zo.'}
+        {/* Leeg scherm */}
+        {displayMatches.length === 0 && !allDone && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <div style={{ fontSize: 'clamp(3rem, 10vw, 8rem)' }}>⏳</div>
+            <p className="font-black" style={{ fontSize: 'clamp(1.5rem, 4vw, 3rem)' }}>Wacht op de wedstrijden…</p>
+            <p style={{ fontSize: 'clamp(0.9rem, 2vw, 1.5rem)', color: 'var(--text-secondary)' }}>
+              Het toernooi begint zo.
             </p>
           </div>
         )}
 
-        {/* Groepsfase-layout: per poule wedstrijden + stand */}
+        {/* Toernooi afgelopen */}
+        {allDone && displayMatches.length === 0 && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <div style={{ fontSize: 'clamp(3rem, 10vw, 8rem)' }}>🏆</div>
+            <p className="font-black" style={{ fontSize: 'clamp(1.5rem, 4vw, 3rem)' }}>Toernooi afgelopen!</p>
+            <p style={{ fontSize: 'clamp(0.9rem, 2vw, 1.5rem)', color: 'var(--text-secondary)' }}>
+              Bedankt voor het meedoen.
+            </p>
+          </div>
+        )}
+
+        {/* ── Groepsfase: per poule een kolom ── */}
         {activePools.length > 0 && (
-          <div className={`grid gap-6 ${activePools.length === 1 ? 'grid-cols-1 max-w-2xl mx-auto' : 'grid-cols-1 md:grid-cols-2'}`}>
+          <div className="flex-1 flex min-h-0 gap-3"
+            style={{ gap: 'clamp(6px, 1.2vw, 18px)' }}>
+
             {activePools.map(pool => {
-              const poolMs = displayMatches.filter(m =>
+              const poolMs  = displayMatches.filter(m =>
                 m.phase === 'group' && (m.home_team?.pool === pool || m.away_team?.pool === pool)
               )
               const poolSts = standingsByPool[pool] ?? []
+
               return (
-                <div key={pool} className="flex flex-col gap-4">
-                  {/* Wedstrijden in deze poule */}
-                  {poolMs.map(m => (
-                    <MatchCard key={m.id} match={m} fieldName={m.field?.name ?? `Wedstrijd ${m.match_number}`} />
-                  ))}
-                  {/* Stand van deze poule */}
+                <div key={pool} className="flex-1 flex flex-col min-h-0 min-w-0"
+                  style={{ gap: 'clamp(6px, 1vh, 12px)' }}>
+
+                  {/* Wedstrijden in deze poule: altijd in een rij naast elkaar */}
+                  <div className="flex min-h-0 flex-1"
+                    style={{ gap: 'clamp(6px, 1vw, 14px)' }}>
+                    {poolMs.map(m => (
+                      <MatchCard
+                        key={m.id}
+                        match={m}
+                        fieldName={m.field?.name ?? `Wedstrijd ${m.match_number}`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Stand onder de wedstrijden */}
                   {poolSts.length > 0 && (
                     <StandingTable poolStandings={poolSts} poolName={poolName(pool)} />
                   )}
@@ -393,38 +483,44 @@ export default function ScreenPage({ params }: { params: Promise<{ id: string }>
           </div>
         )}
 
-        {/* KO-wedstrijden */}
+        {/* ── KO-rondes ── */}
         {koMatches.length > 0 && (
-          <div className="mt-6">
-            <h2 className="text-lg font-black mb-4" style={{ color: 'var(--orange)' }}>🏆 Finale rondes</h2>
-            <div className={`grid gap-4 ${koMatches.length === 1 ? 'max-w-md mx-auto' : 'grid-cols-1 md:grid-cols-2'}`}>
+          <div className="flex-1 flex flex-col min-h-0"
+            style={{ gap: 'clamp(6px, 1vh, 12px)' }}>
+            <p className="font-black flex-shrink-0"
+              style={{ fontSize: 'clamp(0.9rem, 1.8vw, 1.4rem)', color: 'var(--orange)' }}>
+              🏆 Finale rondes
+            </p>
+            <div className="flex flex-1 min-h-0"
+              style={{ gap: 'clamp(6px, 1vw, 14px)' }}>
               {koMatches.map(m => (
-                <MatchCard key={m.id} match={m} fieldName={m.field?.name ?? `Wedstrijd ${m.match_number}`} />
+                <MatchCard
+                  key={m.id}
+                  match={m}
+                  fieldName={m.field?.name ?? `Wedstrijd ${m.match_number}`}
+                />
               ))}
             </div>
           </div>
         )}
 
-        {/* Eindstand na afloop (alle pools) */}
-        {allDone && Object.keys(standingsByPool).length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-lg font-black mb-4" style={{ color: 'var(--text-secondary)' }}>Eindstanden</h2>
-            <div className={`grid gap-4 ${numPools === 1 ? 'max-w-lg mx-auto' : 'grid-cols-1 md:grid-cols-2'}`}>
+        {/* Eindstand na afloop */}
+        {allDone && Object.keys(standingsByPool).length > 0 && displayMatches.length === 0 && (
+          <div className="flex-1 flex flex-col min-h-0" style={{ gap: 'clamp(6px, 1vh, 12px)' }}>
+            <p className="font-black flex-shrink-0"
+              style={{ fontSize: 'clamp(0.9rem, 1.8vw, 1.4rem)', color: 'var(--text-secondary)' }}>
+              Eindstanden
+            </p>
+            <div className="flex gap-4 flex-wrap">
               {Object.entries(standingsByPool).map(([pool, poolSts]) => (
-                <StandingTable key={pool} poolStandings={poolSts} poolName={poolName(Number(pool))} />
+                <div key={pool} className="flex-1 min-w-48">
+                  <StandingTable poolStandings={poolSts} poolName={poolName(Number(pool))} />
+                </div>
               ))}
             </div>
           </div>
         )}
       </main>
-
-      {/* ── Footer ── */}
-      <footer className="px-6 py-3 flex-shrink-0 text-center"
-        style={{ borderTop: '1px solid var(--border)' }}>
-        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-          Live via zaanslicht-toernooi · updates automatisch
-        </p>
-      </footer>
     </div>
   )
 }
