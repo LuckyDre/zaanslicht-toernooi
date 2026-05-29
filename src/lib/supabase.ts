@@ -22,8 +22,33 @@ export type Tournament = {
   ref_token: string | null
   status: 'draft' | 'active' | 'finished'
   logo_url: string | null
+  owner_id: string | null
   created_at: string
   updated_at: string
+}
+
+export type AdminProfile = {
+  id: string
+  user_id: string
+  email: string
+  name: string
+  is_superadmin: boolean
+  is_active: boolean
+  expires_at: string | null
+  features: Record<string, boolean>
+  created_by: string | null
+  created_at: string
+}
+
+export type Invitation = {
+  id: string
+  token: string
+  email: string
+  name: string | null
+  created_by: string | null
+  used_at: string | null
+  expires_at: string
+  created_at: string
 }
 
 export type Team = {

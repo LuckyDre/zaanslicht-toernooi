@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { getMyAdminProfile, isAccountExpired } from '@/lib/admin'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card } from '@/components/ui/Card'
@@ -18,13 +19,36 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setError(error.message || 'Verkeerde e-mail of wachtwoord')
+
+    const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    if (authError) {
+      setError(authError.message || 'Verkeerde e-mail of wachtwoord')
       setLoading(false)
-    } else {
-      router.push('/admin')
+      return
     }
+
+    // Check admin profile — is account active and not expired?
+    const profile = await getMyAdminProfile()
+    if (!profile) {
+      await supabase.auth.signOut()
+      setError('Geen admin-profiel gevonden. Neem contact op met de beheerder.')
+      setLoading(false)
+      return
+    }
+    if (!profile.is_active) {
+      await supabase.auth.signOut()
+      setError('Je account is gedeactiveerd. Neem contact op met de beheerder.')
+      setLoading(false)
+      return
+    }
+    if (isAccountExpired(profile)) {
+      await supabase.auth.signOut()
+      setError('Je account is verlopen. Neem contact op met de beheerder.')
+      setLoading(false)
+      return
+    }
+
+    router.push('/admin')
   }
 
   return (

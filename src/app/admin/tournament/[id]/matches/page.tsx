@@ -448,10 +448,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [editStartTime, setEditStartTime] = useState('')
   const [savingTime, setSavingTime]       = useState(false)
   const [referees, setReferees]           = useState<Referee[]>([])
-  const [showReferees, setShowReferees]   = useState(false)
-  const [newRefName, setNewRefName]       = useState('')
-  const [addingRef, setAddingRef]         = useState(false)
-  const [autoAssigning, setAutoAssigning] = useState(false)
   const [showLogo, setShowLogo]           = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
   const [logoMsg, setLogoMsg]             = useState<{ ok: boolean; text: string } | null>(null)
@@ -518,20 +514,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     return () => { supabase.removeChannel(sub) }
   }, [id])
 
-  // ── Geblokkeerde rondes per scheids (opgeslagen in DB) ───────────────────────
-  const toggleBlock = async (refId: string, roundNum: number) => {
-    const ref = referees.find(r => r.id === refId)
-    if (!ref) return
-    const current = ref.blocked_rounds ?? []
-    const next = current.includes(roundNum)
-      ? current.filter(r => r !== roundNum)
-      : [...current, roundNum]
-    // Optimistische update (direct zichtbaar)
-    setReferees(prev => prev.map(r => r.id === refId ? { ...r, blocked_rounds: next } : r))
-    // Opslaan in DB
-    await supabase.from('referees').update({ blocked_rounds: next }).eq('id', refId)
-  }
-
   const upd = (matchId: string, p: Partial<MS>) =>
     setStates(prev => ({ ...prev, [matchId]: { ...prev[matchId], ...p } }))
 
@@ -559,103 +541,9 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     return data
   }
 
-  // ── Scheidsrechters beheer ───────────────────────────────────────────────────
-  const reloadReferees = async () => {
-    const { data } = await supabase.from('referees').select('*').eq('tournament_id', id).order('created_at')
-    setReferees(data ?? [])
-  }
-
-  const addReferee = async () => {
-    const name = newRefName.trim()
-    if (!name) return
-    setAddingRef(true)
-    await supabase.from('referees').insert({ tournament_id: id, name })
-    setNewRefName('')
-    setAddingRef(false)
-    reloadReferees()
-  }
-
-  const deleteReferee = async (refId: string) => {
-    if (!confirm('Scheidsrechter verwijderen? Wedstrijden worden losgekoppeld.')) return
-    await supabase.from('referees').delete().eq('id', refId)
-    reloadReferees()
-  }
-
   const assignReferee = async (matchId: string, refId: string | null) => {
     await supabase.from('matches').update({ referee_id: refId }).eq('id', matchId)
     setMatches(prev => prev.map(m => m.id === matchId ? { ...m, referee_id: refId } : m))
-  }
-
-  const autoAssign = async () => {
-    if (!referees.length) return
-    if (!confirm(`Wedstrijden automatisch verdelen over ${referees.length} scheidsrechter${referees.length !== 1 ? 's' : ''}?\n\nBestaande toewijzingen worden overschreven.`)) return
-    setAutoAssigning(true)
-
-    // Alle niet-geannuleerde wedstrijden, gesorteerd op ronde en veldnummer
-    const toAssign = matches
-      .filter(m => m.status !== 'cancelled')
-      .sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || (a.match_number ?? 0) - (b.match_number ?? 0))
-
-    // Wedstrijden groeperen per ronde
-    const roundGroups: Record<number, typeof toAssign> = {}
-    toAssign.forEach(m => {
-      const r = m.round ?? 0
-      if (!roundGroups[r]) roundGroups[r] = []
-      roundGroups[r].push(m)
-    })
-
-    // Greedy verdeling met pauze-voorkeur:
-    // 1. Kies bij voorkeur een scheids die de vorige ronde vrij was (pauze)
-    // 2. Als dat niet lukt (te weinig scheids), mag iemand twee rondes op rij
-    const counts: Record<string, number> = {}
-    const lastWorkedRound: Record<string, number | null> = {}
-    referees.forEach(r => { counts[r.id] = 0; lastWorkedRound[r.id] = null })
-
-    const sortedRoundNums = Object.keys(roundGroups).map(Number).sort((a, b) => a - b)
-    const updates: { id: string; refId: string }[] = []
-
-    for (let ri = 0; ri < sortedRoundNums.length; ri++) {
-      const roundNum  = sortedRoundNums[ri]
-      const prevRound = ri > 0 ? sortedRoundNums[ri - 1] : null
-      const roundMs   = roundGroups[roundNum]
-      const usedInRound = new Set<string>()
-
-      for (const m of roundMs) {
-        // Geblokkeerde scheids nooit inplannen voor deze ronde
-        const notBlocked = (r: Referee) => !(r.blocked_rounds ?? []).includes(roundNum)
-
-        // Voorkeur: scheids vrij + niet vorige ronde gefloten (pauze)
-        let available = referees.filter(r =>
-          !usedInRound.has(r.id) && notBlocked(r) &&
-          (prevRound === null || lastWorkedRound[r.id] !== prevRound)
-        )
-        // Fallback 1: pauze-eis laten vallen, maar geblokkeerde nog steeds overslaan
-        if (!available.length) {
-          available = referees.filter(r => !usedInRound.has(r.id) && notBlocked(r))
-        }
-        // Fallback 2: iedereen vrij (alle constraints los — laatste redmiddel)
-        if (!available.length) {
-          available = referees.filter(r => !usedInRound.has(r.id))
-        }
-        if (!available.length) break // meer velden dan scheidsrechters
-
-        // Kies de scheids met de laagste werklast (bij gelijkspel: eerste in lijst)
-        const best = available.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b)
-        updates.push({ id: m.id, refId: best.id })
-        counts[best.id]++
-        usedInRound.add(best.id)
-        lastWorkedRound[best.id] = roundNum
-      }
-    }
-
-    await Promise.all(updates.map(({ id, refId }) =>
-      supabase.from('matches').update({ referee_id: refId }).eq('id', id)
-    ))
-    setMatches(prev => prev.map(m => {
-      const u = updates.find(x => x.id === m.id)
-      return u ? { ...m, referee_id: u.refId } : m
-    }))
-    setAutoAssigning(false)
   }
 
   const saveMatch = async (match: Match, status: Match['status']) => {
@@ -1231,213 +1119,22 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
             )}
           </div>
 
-          {/* ── Scheidsrechters sectie ── */}
-          <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
-            <button
-              onClick={() => setShowReferees(r => !r)}
-              className="w-full flex items-center justify-between px-4 py-3 cursor-pointer"
-              style={{ backgroundColor: 'var(--bg-card)' }}>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold">👤 Scheidsrechters</span>
-                <span className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: referees.length > 0 ? '#FF6B0020' : 'var(--bg-elevated)', color: referees.length > 0 ? 'var(--orange)' : 'var(--text-secondary)' }}>
-                  {referees.length}
-                </span>
-              </div>
-              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{showReferees ? '▲' : '▼'}</span>
-            </button>
-
-            {showReferees && (
-              <div style={{ borderTop: '1px solid var(--border)' }}>
-                {/* Scheidsrechter toevoegen + automatisch verdelen */}
-                <div className="px-4 py-3 flex items-center gap-2"
-                  style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
-                  <input
-                    type="text"
-                    placeholder="Naam scheidsrechter…"
-                    value={newRefName}
-                    onChange={e => setNewRefName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && addReferee()}
-                    className="flex-1 rounded-lg px-2 py-1 text-sm outline-none"
-                    style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                  />
-                  <button onClick={addReferee} disabled={addingRef || !newRefName.trim()}
-                    className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-40"
-                    style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>
-                    {addingRef ? '…' : '+ Voeg toe'}
-                  </button>
+          {/* ── Scheidsrechters knop → eigen pagina ── */}
+          <div className="mb-4">
+            <Link href={`/admin/tournament/${id}/referees`}>
+              <div className="rounded-2xl px-4 py-3 flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.99] transition-all"
+                style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold">👤 Scheidsrechters</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: referees.length > 0 ? '#FF6B0020' : 'var(--bg-elevated)', color: referees.length > 0 ? 'var(--orange)' : 'var(--text-secondary)' }}>
+                    {referees.length}
+                  </span>
                 </div>
-                {/* Automatisch verdelen */}
-                {referees.length >= 2 && (
-                  <div className="px-4 py-2.5 flex items-center justify-between gap-3"
-                    style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
-                    <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      Verdeel alle wedstrijden eerlijk over {referees.length} scheidsrechters
-                    </p>
-                    <button onClick={autoAssign} disabled={autoAssigning}
-                      className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50 flex-shrink-0 active:scale-95"
-                      style={{ backgroundColor: '#22c55e20', color: '#22c55e', border: '1px solid #22c55e50' }}>
-                      {autoAssigning ? '⏳ Bezig…' : '🎲 Verdeel automatisch'}
-                    </button>
-                  </div>
-                )}
-
-                {/* Lijst van scheidsrechters */}
-                {referees.length === 0 && (
-                  <div className="px-4 py-5 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
-                    Nog geen scheidsrechters. Voeg een naam toe hierboven.
-                  </div>
-                )}
-                {[...referees]
-                  .sort((a, b) =>
-                    matches.filter(m => m.referee_id === a.id).length -
-                    matches.filter(m => m.referee_id === b.id).length
-                  )
-                  .map((ref, idx) => {
-                  const assignedCount = matches.filter(m => m.referee_id === ref.id).length
-                  const maxCount = Math.max(...referees.map(r => matches.filter(m => m.referee_id === r.id).length), 1)
-                  const barPct = Math.round((assignedCount / maxCount) * 100)
-                  const refUrl = typeof window !== 'undefined'
-                    ? `${window.location.origin}/ref/${ref.id}/${ref.token}`
-                    : ''
-                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(refUrl)}&bgcolor=ffffff&color=1a1a1a&margin=8`
-
-                  return (
-                    <div key={ref.id}
-                      className="flex flex-col"
-                      style={{ borderTop: idx > 0 ? '1px solid var(--border)' : undefined, backgroundColor: 'var(--bg-card)' }}>
-                      {/* Hoofdrij */}
-                      <div className="px-4 py-3 flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="font-semibold text-sm truncate">{ref.name}</p>
-                            <span className="text-xs font-bold px-1.5 py-0.5 rounded-md flex-shrink-0"
-                              style={{
-                                backgroundColor: assignedCount === 0 ? '#ef444415' : '#22c55e20',
-                                color: assignedCount === 0 ? '#ef4444' : '#22c55e',
-                              }}>
-                              {assignedCount}×
-                            </span>
-                          </div>
-                          {/* Mini werklast-balkje */}
-                          <div className="mt-1 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', width: 80 }}>
-                            <div className="h-full rounded-full transition-all duration-300"
-                              style={{ width: `${barPct}%`, backgroundColor: assignedCount === 0 ? '#ef4444' : '#22c55e' }} />
-                          </div>
-                        </div>
-                        <RefQRButton refUrl={refUrl} qrUrl={qrUrl} refName={ref.name} />
-                        <button onClick={() => deleteReferee(ref.id)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-xs cursor-pointer active:scale-90 flex-shrink-0"
-                          style={{ backgroundColor: '#ef444415', color: '#ef4444', border: '1px solid #ef444430' }}
-                          title="Verwijder scheidsrechter">
-                          ✕
-                        </button>
-                      </div>
-                      {/* Beschikbaarheid: blokkeer rondes */}
-                      {rounds.length > 0 && (
-                        <div className="px-4 pb-2 flex items-start gap-2">
-                          <span className="text-[11px] font-semibold flex-shrink-0 pt-0.5"
-                            style={{ color: 'var(--text-secondary)', minWidth: 44 }}>
-                            Blok:
-                          </span>
-                          <div className="flex flex-wrap gap-1">
-                            {rounds.map(({ round: rn, matches: rm }) => {
-                              const isBlocked = (ref.blocked_rounds ?? []).includes(rn)
-                              const pill = getRoundPillLabel(rm)
-                              return (
-                                <button key={rn} onClick={() => toggleBlock(ref.id, rn)}
-                                  title={isBlocked ? `Ronde ${rn} geblokkeerd — klik om vrij te geven` : `Klik om ronde ${rn} te blokkeren`}
-                                  className="text-[11px] px-1.5 py-0.5 rounded-md cursor-pointer active:scale-95 font-semibold transition-colors select-none"
-                                  style={{
-                                    backgroundColor: isBlocked ? '#ef444422' : 'var(--bg-elevated)',
-                                    color: isBlocked ? '#ef4444' : 'var(--text-secondary)',
-                                    border: `1px solid ${isBlocked ? '#ef444455' : 'var(--border)'}`,
-                                    textDecoration: isBlocked ? 'line-through' : 'none',
-                                  }}>
-                                  {pill ?? `R${rn}`}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Rooster: per veld alle rondes zichtbaar, geen inklapmenu */}
-                      {fields.length > 0 && (
-                        <div className="px-4 pb-3 flex flex-col gap-1.5">
-                          {fields.map(f => {
-                            const fieldMs = matches
-                              .filter(m => m.field_id === f.id && m.status !== 'cancelled')
-                              .sort((a, b) => (a.round ?? 0) - (b.round ?? 0))
-                            if (!fieldMs.length) return null
-                            return (
-                              <div key={f.id} className="flex items-start gap-2">
-                                {/* Veldnaam links */}
-                                <span className="text-[11px] font-semibold flex-shrink-0 pt-0.5"
-                                  style={{ color: 'var(--text-secondary)', minWidth: 44 }}>
-                                  {f.name}:
-                                </span>
-                                {/* Ronde-pills rechts, wrappend */}
-                                <div className="flex flex-wrap gap-1">
-                                  {fieldMs.map(m => {
-                                    const isBlockedRound = (ref.blocked_rounds ?? []).includes(m.round)
-                                    const isMine  = m.referee_id === ref.id
-                                    const isOther = m.referee_id !== null && !isMine
-                                    const other   = isOther ? referees.find(r => r.id === m.referee_id) : null
-                                    const pill    = getRoundPillLabel(rounds.find(r => r.round === m.round)?.matches ?? [])
-
-                                    const handleClick = async () => {
-                                      if (isBlockedRound) return // geblokkeerde ronde → geen actie
-                                      const newRefId = isMine ? null : ref.id
-                                      const conflicts = newRefId !== null
-                                        ? matches.filter(x => x.id !== m.id && x.round === m.round && x.referee_id === ref.id)
-                                        : []
-                                      const toUpdate = [
-                                        { id: m.id, refId: newRefId },
-                                        ...conflicts.map(x => ({ id: x.id, refId: null as string | null })),
-                                      ]
-                                      await Promise.all(toUpdate.map(({ id, refId }) =>
-                                        supabase.from('matches').update({ referee_id: refId }).eq('id', id)
-                                      ))
-                                      setMatches(prev => prev.map(p => {
-                                        const u = toUpdate.find(t => t.id === p.id)
-                                        return u ? { ...p, referee_id: u.refId } : p
-                                      }))
-                                    }
-
-                                    return (
-                                      <button key={m.id} onClick={handleClick}
-                                        title={
-                                          isBlockedRound ? `Ronde geblokkeerd voor ${ref.name}`
-                                          : isOther ? `Nu: ${other?.name ?? '?'} — klik om over te nemen`
-                                          : isMine ? 'Klik = pauze geven'
-                                          : 'Klik = toewijzen'
-                                        }
-                                        className="text-[11px] px-1.5 py-0.5 rounded-md font-semibold transition-colors"
-                                        style={{
-                                          cursor: isBlockedRound ? 'not-allowed' : 'pointer',
-                                          opacity: isBlockedRound ? 0.35 : 1,
-                                          backgroundColor: isMine ? '#22c55e20' : isOther ? '#ef444415' : 'var(--bg-elevated)',
-                                          color: isMine ? '#22c55e' : isOther ? '#ef4444' : 'var(--text-secondary)',
-                                          border: `1px solid ${isMine ? '#22c55e50' : isOther ? '#ef444435' : 'var(--border)'}`,
-                                        }}>
-                                        {pill ?? `R${m.round}`}
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                <span className="text-sm font-semibold" style={{ color: 'var(--orange)' }}>Beheren →</span>
               </div>
-            )}
+            </Link>
           </div>
-
           {/* ── Tournament winner banner ── */}
           {tournamentWinner && (
             <div className="rounded-2xl p-5 text-center mb-5"

@@ -186,10 +186,12 @@ export default function NewTournamentPage() {
   const handleCreate = async () => {
     setLoading(true)
     try {
+      const { data: { user } } = await supabase.auth.getUser()
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') + '-' + Date.now()
 
       const tournamentBase = {
         name: name.trim(), slug,
+        owner_id: user?.id ?? null,
         num_fields: numFields,
         num_teams:  numTeams,
         match_duration_minutes: matchMinutes * (numHalves === 2 ? 2 : 1),

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, Tournament } from '@/lib/supabase'
+import { getMyAdminProfile } from '@/lib/admin'
+import type { AdminProfile } from '@/lib/supabase'
 import { Navbar } from '@/components/ui/Navbar'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -19,11 +21,14 @@ export default function AdminPage() {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [statusChanging, setStatusChanging] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [myProfile, setMyProfile] = useState<AdminProfile | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.push('/login')
+      if (!data.session) { router.push('/login'); return }
     })
+    getMyAdminProfile().then(p => setMyProfile(p))
+    // RLS automatically filters tournaments to those owned by the current user
     supabase.from('tournaments').select('*').order('created_at', { ascending: false })
       .then(({ data }) => {
         setTournaments(data ?? [])
@@ -67,10 +72,15 @@ export default function AdminPage() {
             <h1 className="text-2xl font-bold">Admin Dashboard</h1>
             <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>Beheer je toernooien</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Link href="/admin/tournament/new">
               <Button>+ Nieuw toernooi</Button>
             </Link>
+            {myProfile?.is_superadmin && (
+              <Link href="/superadmin">
+                <Button variant="secondary">⚙️ Superadmin</Button>
+              </Link>
+            )}
             <Button variant="ghost" onClick={handleLogout}>Uitloggen</Button>
           </div>
         </div>
@@ -137,6 +147,9 @@ export default function AdminPage() {
                     </Link>
                     <Link href={`/tournament/${t.id}`} target="_blank">
                       <Button size="sm" variant="ghost">Bekijk ↗</Button>
+                    </Link>
+                    <Link href={`/tournament/${t.id}/screen`} target="_blank">
+                      <Button size="sm" variant="ghost">📺 Extern scherm</Button>
                     </Link>
                     <Button size="sm" variant="danger"
                       loading={deleting === t.id}
