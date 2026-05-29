@@ -455,8 +455,6 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showLogo, setShowLogo]           = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
   const [logoMsg, setLogoMsg]             = useState<{ ok: boolean; text: string } | null>(null)
-  // blockedRounds: per scheids-ID een Set van ronde-nummers waarvoor ze niet beschikbaar zijn
-  const [blockedRounds, setBlockedRounds] = useState<Record<string, Set<number>>>({})
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -520,34 +518,18 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     return () => { supabase.removeChannel(sub) }
   }, [id])
 
-  // ── Geblokkeerde rondes per scheids (localStorage) ───────────────────────────
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(`blocked_${id}`)
-      if (!raw) return
-      const parsed = JSON.parse(raw) as Record<string, number[]>
-      const sets: Record<string, Set<number>> = {}
-      Object.entries(parsed).forEach(([refId, rounds]) => { sets[refId] = new Set(rounds) })
-      setBlockedRounds(sets)
-    } catch { /* ignore */ }
-  }, [id])
-
-  useEffect(() => {
-    try {
-      const serial: Record<string, number[]> = {}
-      Object.entries(blockedRounds).forEach(([refId, s]) => { if (s.size > 0) serial[refId] = [...s] })
-      localStorage.setItem(`blocked_${id}`, JSON.stringify(serial))
-    } catch { /* ignore */ }
-  }, [blockedRounds, id])
-
-  const toggleBlock = (refId: string, roundNum: number) => {
-    setBlockedRounds(prev => {
-      const next = { ...prev }
-      const s = new Set(next[refId] ?? [])
-      if (s.has(roundNum)) s.delete(roundNum); else s.add(roundNum)
-      next[refId] = s
-      return next
-    })
+  // ── Geblokkeerde rondes per scheids (opgeslagen in DB) ───────────────────────
+  const toggleBlock = async (refId: string, roundNum: number) => {
+    const ref = referees.find(r => r.id === refId)
+    if (!ref) return
+    const current = ref.blocked_rounds ?? []
+    const next = current.includes(roundNum)
+      ? current.filter(r => r !== roundNum)
+      : [...current, roundNum]
+    // Optimistische update (direct zichtbaar)
+    setReferees(prev => prev.map(r => r.id === refId ? { ...r, blocked_rounds: next } : r))
+    // Opslaan in DB
+    await supabase.from('referees').update({ blocked_rounds: next }).eq('id', refId)
   }
 
   const upd = (matchId: string, p: Partial<MS>) =>
@@ -640,7 +622,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
 
       for (const m of roundMs) {
         // Geblokkeerde scheids nooit inplannen voor deze ronde
-        const notBlocked = (r: Referee) => !(blockedRounds[r.id]?.has(roundNum))
+        const notBlocked = (r: Referee) => !(r.blocked_rounds ?? []).includes(roundNum)
 
         // Voorkeur: scheids vrij + niet vorige ronde gefloten (pauze)
         let available = referees.filter(r =>
@@ -1360,7 +1342,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                           </span>
                           <div className="flex flex-wrap gap-1">
                             {rounds.map(({ round: rn, matches: rm }) => {
-                              const isBlocked = blockedRounds[ref.id]?.has(rn) ?? false
+                              const isBlocked = (ref.blocked_rounds ?? []).includes(rn)
                               const pill = getRoundPillLabel(rm)
                               return (
                                 <button key={rn} onClick={() => toggleBlock(ref.id, rn)}
@@ -1398,7 +1380,7 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
                                 {/* Ronde-pills rechts, wrappend */}
                                 <div className="flex flex-wrap gap-1">
                                   {fieldMs.map(m => {
-                                    const isBlockedRound = blockedRounds[ref.id]?.has(m.round) ?? false
+                                    const isBlockedRound = (ref.blocked_rounds ?? []).includes(m.round)
                                     const isMine  = m.referee_id === ref.id
                                     const isOther = m.referee_id !== null && !isMine
                                     const other   = isOther ? referees.find(r => r.id === m.referee_id) : null

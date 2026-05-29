@@ -71,6 +71,7 @@ export type Referee = {
   tournament_id: string
   name: string
   token: string
+  blocked_rounds: number[] | null
   created_at: string
 }
 
