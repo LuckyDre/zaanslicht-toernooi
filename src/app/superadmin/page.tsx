@@ -148,7 +148,26 @@ export default function SuperAdminPage() {
       if (updErr) toast.error(`Status bijwerken mislukt: ${updErr.message}`)
 
       setAccessRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'approved' } : r))
-      setApprovedUrl({ reqId: req.id, url: `${window.location.origin}/invite/${inv.token}` })
+      const inviteUrl = `${window.location.origin}/invite/${inv.token}`
+      setApprovedUrl({ reqId: req.id, url: inviteUrl })
+
+      // Stuur uitnodigingsmail via Resend
+      const { data: { session } } = await supabase.auth.getSession()
+      const mailRes = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token ?? ''}`,
+        },
+        body: JSON.stringify({ toEmail: req.email, toName: req.name, inviteUrl }),
+      })
+      if (!mailRes.ok) {
+        const { error: mailErr } = await mailRes.json()
+        toast.error(`Uitnodiging aangemaakt maar mail mislukt: ${mailErr}`)
+      } else {
+        toast.success(`✓ Uitnodiging verstuurd naar ${req.email}`)
+      }
+
       await loadData()
     } finally {
       setApprovingId(null)
