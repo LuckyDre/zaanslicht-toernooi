@@ -100,6 +100,18 @@ export type Referee = {
   created_at: string
 }
 
+export type AccessRequest = {
+  id: string
+  name: string
+  email: string
+  club: string | null
+  message: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  created_at: string
+  reviewed_at: string | null
+  reviewed_by: string | null
+}
+
 export type Standing = {
   id: string
   tournament_id: string

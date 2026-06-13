@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { supabase, AdminProfile, Invitation } from '@/lib/supabase'
+import { supabase, AdminProfile, Invitation, AccessRequest } from '@/lib/supabase'
 import { FEATURE_FLAGS } from '@/lib/admin'
 import { Navbar } from '@/components/ui/Navbar'
 import { Card } from '@/components/ui/Card'
@@ -13,10 +13,15 @@ import { Badge } from '@/components/ui/Badge'
 
 export default function SuperAdminPage() {
   const router = useRouter()
-  const [loading,      setLoading]      = useState(true)
-  const [myProfile,    setMyProfile]    = useState<AdminProfile | null>(null)
-  const [admins,       setAdmins]       = useState<AdminProfile[]>([])
-  const [invitations,  setInvitations]  = useState<Invitation[]>([])
+  const [loading,         setLoading]         = useState(true)
+  const [myProfile,       setMyProfile]       = useState<AdminProfile | null>(null)
+  const [admins,          setAdmins]          = useState<AdminProfile[]>([])
+  const [invitations,     setInvitations]     = useState<Invitation[]>([])
+  const [accessRequests,  setAccessRequests]  = useState<AccessRequest[]>([])
+  const [approvingId,     setApprovingId]     = useState<string | null>(null)
+  const [rejectingId,     setRejectingId]     = useState<string | null>(null)
+  const [approvedUrl,     setApprovedUrl]     = useState<{ reqId: string; url: string } | null>(null)
+  const [copiedReq,       setCopiedReq]       = useState(false)
 
   // Uitnodiging aanmaken
   const [inviteEmail,  setInviteEmail]  = useState('')
@@ -32,12 +37,14 @@ export default function SuperAdminPage() {
   const [featureEdit,  setFeatureEdit]  = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
-    const [{ data: a }, { data: i }] = await Promise.all([
+    const [{ data: a }, { data: i }, { data: r }] = await Promise.all([
       supabase.from('admin_profiles').select('*').order('created_at'),
       supabase.from('invitations').select('*').order('created_at', { ascending: false }),
+      supabase.from('access_requests').select('*').order('created_at', { ascending: false }),
     ])
     setAdmins(a ?? [])
     setInvitations(i ?? [])
+    setAccessRequests(r ?? [])
   }, [])
 
   useEffect(() => {
@@ -113,9 +120,51 @@ export default function SuperAdminPage() {
     setInvitations(prev => prev.filter(i => i.id !== invId))
   }
 
+  // ── Toegangsaanvragen ─────────────────────────────────────────────────────
+  const approveRequest = async (req: AccessRequest) => {
+    if (!myProfile) return
+    setApprovingId(req.id)
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + 30)
+    const { data: inv, error } = await supabase.from('invitations').insert({
+      email:      req.email,
+      name:       req.name,
+      created_by: myProfile.id,
+      expires_at: expiresAt.toISOString(),
+    }).select().single()
+    if (!error && inv) {
+      await supabase.from('access_requests').update({
+        status:      'approved',
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: myProfile.id,
+      }).eq('id', req.id)
+      setAccessRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'approved' } : r))
+      setApprovedUrl({ reqId: req.id, url: `${window.location.origin}/invite/${inv.token}` })
+      await loadData()
+    }
+    setApprovingId(null)
+  }
+
+  const rejectRequest = async (req: AccessRequest) => {
+    if (!myProfile || !confirm(`Aanvraag van ${req.name} afwijzen?`)) return
+    setRejectingId(req.id)
+    await supabase.from('access_requests').update({
+      status:      'rejected',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: myProfile.id,
+    }).eq('id', req.id)
+    setAccessRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'rejected' } : r))
+    setRejectingId(null)
+  }
+
   const copyUrl = async (url: string) => {
     await navigator.clipboard.writeText(url)
     setCopied(true); setTimeout(() => setCopied(false), 2500)
+  }
+
+  const copyReqUrl = async (url: string) => {
+    await navigator.clipboard.writeText(url)
+    setCopiedReq(true); setTimeout(() => setCopiedReq(false), 2500)
   }
 
   if (loading) return (
@@ -128,8 +177,9 @@ export default function SuperAdminPage() {
     </div>
   )
 
-  const regularAdmins  = admins.filter(a => !a.is_superadmin)
-  const pendingInvites = invitations.filter(i => !i.used_at && new Date(i.expires_at) > new Date())
+  const regularAdmins    = admins.filter(a => !a.is_superadmin)
+  const pendingInvites   = invitations.filter(i => !i.used_at && new Date(i.expires_at) > new Date())
+  const pendingRequests  = accessRequests.filter(r => r.status === 'pending')
 
   return (
     <div className="min-h-screen pb-10" style={{ backgroundColor: 'var(--bg-base)' }}>
@@ -146,19 +196,127 @@ export default function SuperAdminPage() {
               Beheer admins, toegang en features
             </p>
           </div>
-          <div className="flex gap-3 mt-4">
+          <div className="flex gap-3 mt-4 flex-wrap">
             {[
               { label: 'Actieve admins', value: regularAdmins.filter(a => a.is_active).length },
               { label: 'Open uitnodigingen', value: pendingInvites.length },
+              { label: 'Openstaande aanvragen', value: pendingRequests.length, highlight: pendingRequests.length > 0 },
             ].map(s => (
               <div key={s.label} className="px-4 py-2.5 rounded-xl text-center"
-                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-                <p className="text-xl font-bold">{s.value}</p>
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: `1px solid ${'highlight' in s && s.highlight ? 'var(--orange)' : 'var(--border)'}`,
+                }}>
+                <p className="text-xl font-bold" style={'highlight' in s && s.highlight ? { color: 'var(--orange)' } : {}}>{s.value}</p>
                 <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{s.label}</p>
               </div>
             ))}
           </div>
         </div>
+
+        {/* ── Toegangsaanvragen ── */}
+        <Card className="mb-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold">📋 Toegangsaanvragen</h2>
+            {pendingRequests.length > 0 && (
+              <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+                style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>
+                {pendingRequests.length} nieuw
+              </span>
+            )}
+          </div>
+
+          {accessRequests.length === 0 ? (
+            <p className="text-sm py-2" style={{ color: 'var(--text-secondary)' }}>
+              Nog geen aanvragen ontvangen.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {accessRequests.map(req => (
+                <div key={req.id} className="rounded-2xl p-4"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    border: `1px solid ${req.status === 'pending' ? 'var(--orange)40' : 'var(--border)'}`,
+                    opacity: req.status !== 'pending' ? 0.6 : 1,
+                  }}>
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <span className="font-semibold text-sm">{req.name}</span>
+                        {req.club && (
+                          <span className="text-xs px-2 py-0.5 rounded-full"
+                            style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                            {req.club}
+                          </span>
+                        )}
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                          style={{
+                            backgroundColor: req.status === 'pending' ? '#f59e0b20' : req.status === 'approved' ? '#22c55e20' : '#ef444420',
+                            color: req.status === 'pending' ? '#f59e0b' : req.status === 'approved' ? '#22c55e' : '#ef4444',
+                          }}>
+                          {req.status === 'pending' ? 'Wachtend' : req.status === 'approved' ? '✓ Goedgekeurd' : '✗ Afgewezen'}
+                        </span>
+                      </div>
+                      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{req.email}</p>
+                      {req.message && (
+                        <p className="text-xs mt-1.5 italic" style={{ color: 'var(--text-secondary)' }}>
+                          &ldquo;{req.message}&rdquo;
+                        </p>
+                      )}
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                        {new Date(req.created_at).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+
+                    {/* Actieknoppen — alleen voor wachtende aanvragen */}
+                    {req.status === 'pending' && (
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => rejectRequest(req)}
+                          disabled={rejectingId === req.id || approvingId === req.id}
+                          className="px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50 transition-all active:scale-95"
+                          style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                          {rejectingId === req.id ? '…' : '✗ Afwijzen'}
+                        </button>
+                        <button
+                          onClick={() => approveRequest(req)}
+                          disabled={approvingId === req.id || rejectingId === req.id}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 transition-all active:scale-95"
+                          style={{ backgroundColor: 'var(--orange)', color: '#fff' }}>
+                          {approvingId === req.id ? '⏳ …' : '✓ Goedkeuren (30d)'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Uitnodigingslink na goedkeuring */}
+                  {approvedUrl?.reqId === req.id && (
+                    <div className="mt-3 p-3 rounded-xl"
+                      style={{ backgroundColor: '#22c55e12', border: '1px solid #22c55e40' }}>
+                      <p className="text-xs font-semibold mb-1.5" style={{ color: '#22c55e' }}>
+                        ✓ Uitnodiging aangemaakt — 30 dagen geldig
+                      </p>
+                      <p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>
+                        Stuur deze link naar {req.name}:
+                      </p>
+                      <div className="flex gap-2 items-center">
+                        <code className="flex-1 text-xs px-2 py-1.5 rounded-lg overflow-hidden"
+                          style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                          {approvedUrl.url}
+                        </code>
+                        <button onClick={() => copyReqUrl(approvedUrl.url)}
+                          className="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer active:scale-95"
+                          style={{ backgroundColor: copiedReq ? '#22c55e' : 'var(--orange)', color: '#fff' }}>
+                          {copiedReq ? '✓' : '📋'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
 
         {/* ── Nieuwe uitnodiging ── */}
         <Card className="mb-5">
