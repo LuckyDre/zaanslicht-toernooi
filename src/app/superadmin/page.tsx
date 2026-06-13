@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, AdminProfile, Invitation, AccessRequest } from '@/lib/supabase'
+import toast, { Toaster } from 'react-hot-toast'
 import { FEATURE_FLAGS } from '@/lib/admin'
 import { Navbar } from '@/components/ui/Navbar'
 import { Card } from '@/components/ui/Card'
@@ -122,27 +123,36 @@ export default function SuperAdminPage() {
 
   // ── Toegangsaanvragen ─────────────────────────────────────────────────────
   const approveRequest = async (req: AccessRequest) => {
-    if (!myProfile) return
+    if (!myProfile) { toast.error('Geen admin-profiel gevonden'); return }
     setApprovingId(req.id)
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 30)
-    const { data: inv, error } = await supabase.from('invitations').insert({
-      email:      req.email,
-      name:       req.name,
-      created_by: myProfile.id,
-      expires_at: expiresAt.toISOString(),
-    }).select().single()
-    if (!error && inv) {
-      await supabase.from('access_requests').update({
+    try {
+      const expiresAt = new Date()
+      expiresAt.setDate(expiresAt.getDate() + 30)
+
+      const { data: inv, error: invErr } = await supabase.from('invitations').insert({
+        email:      req.email,
+        name:       req.name,
+        created_by: myProfile.id,
+        expires_at: expiresAt.toISOString(),
+      }).select().single()
+
+      if (invErr) { toast.error(`Uitnodiging mislukt: ${invErr.message}`); return }
+      if (!inv)   { toast.error('Geen data terug van uitnodiging'); return }
+
+      const { error: updErr } = await supabase.from('access_requests').update({
         status:      'approved',
         reviewed_at: new Date().toISOString(),
         reviewed_by: myProfile.id,
       }).eq('id', req.id)
+
+      if (updErr) toast.error(`Status bijwerken mislukt: ${updErr.message}`)
+
       setAccessRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'approved' } : r))
       setApprovedUrl({ reqId: req.id, url: `${window.location.origin}/invite/${inv.token}` })
       await loadData()
+    } finally {
+      setApprovingId(null)
     }
-    setApprovingId(null)
   }
 
   const rejectRequest = async (req: AccessRequest) => {
@@ -183,6 +193,7 @@ export default function SuperAdminPage() {
 
   return (
     <div className="min-h-screen pb-10" style={{ backgroundColor: 'var(--bg-base)' }}>
+      <Toaster position="top-center" toastOptions={{ style: { background: '#1a1a1a', color: '#fff', border: '1px solid #333' } }} />
       <Navbar isAdmin />
       <main className="max-w-3xl mx-auto px-4 py-6">
 
