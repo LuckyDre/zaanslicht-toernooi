@@ -70,7 +70,7 @@ export default function SuperAdminPage() {
     const { data, error } = await supabase.from('invitations').insert({
       email:      inviteEmail.trim(),
       name:       inviteName.trim() || null,
-      created_by: myProfile.id,
+      created_by: myProfile.user_id,
       expires_at: expiresAt.toISOString(),
     }).select().single()
     if (!error && data) {
@@ -132,7 +132,7 @@ export default function SuperAdminPage() {
       const { data: inv, error: invErr } = await supabase.from('invitations').insert({
         email:      req.email,
         name:       req.name,
-        created_by: myProfile.id,
+        created_by: myProfile.user_id,
         expires_at: expiresAt.toISOString(),
       }).select().single()
 
