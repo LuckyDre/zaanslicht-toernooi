@@ -117,7 +117,8 @@ export default function SuperAdminPage() {
   }
 
   const deleteInvitation = async (invId: string) => {
-    await supabase.from('invitations').delete().eq('id', invId)
+    const { error } = await supabase.from('invitations').delete().eq('id', invId)
+    if (error) { toast.error(`Verwijderen mislukt: ${error.message}`); return }
     setInvitations(prev => prev.filter(i => i.id !== invId))
   }
 
