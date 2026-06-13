@@ -7,6 +7,7 @@ import { supabase, Match, Tournament, Standing, Field, Referee } from '@/lib/sup
 import { Navbar } from '@/components/ui/Navbar'
 import { Button } from '@/components/ui/Button'
 import { BracketOverlay } from '@/components/admin/BracketOverlay'
+import { downloadTournamentExcel } from '@/lib/excel'
 
 // ── Elapsed timer ─────────────────────────────────────────────────────────────
 function ElapsedTimer({ startedAt, matchMinutes }: { startedAt: string; matchMinutes: number }) {
@@ -451,6 +452,8 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
   const [showLogo, setShowLogo]           = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
   const [logoMsg, setLogoMsg]             = useState<{ ok: boolean; text: string } | null>(null)
+  const [showExport, setShowExport]       = useState(false)
+  const [excelLoading, setExcelLoading]   = useState<'blank' | 'filled' | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { if (!data.session) router.push('/login') })
@@ -875,6 +878,17 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
     && !(latestKOPhase === 'semi_final' && koMatches.some(m => m.phase === 'final'))
     && !(latestKOPhase === 'quarter_final' && koMatches.some(m => m.phase === 'semi_final'))
 
+  // ── Excel download ─────────────────────────────────────────────────────────
+  const handleExcel = async (mode: 'blank' | 'filled') => {
+    if (!tournament) return
+    setExcelLoading(mode)
+    try {
+      await downloadTournamentExcel(tournament, matches, standings, fields, mode)
+    } finally {
+      setExcelLoading(null)
+    }
+  }
+
   const showGenerateButton = canGenerateFirst || canGenerateNext
   const generateButtonLabel = (() => {
     if (canGenerateFirst) {
@@ -946,6 +960,59 @@ export default function MatchesPage({ params }: { params: Promise<{ id: string }
               <p className="text-xs mt-2 font-semibold" style={{ color: 'var(--orange)' }}>
                 ● {liveCount} wedstrijd{liveCount > 1 ? 'en' : ''} live
               </p>
+            )}
+          </div>
+
+          {/* ── Exporteren sectie ── */}
+          <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+            <button
+              onClick={() => setShowExport(e => !e)}
+              className="w-full flex items-center justify-between px-4 py-3 cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-card)' }}>
+              <span className="text-sm font-bold">📥 Exporteren &amp; printen</span>
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{showExport ? '▲' : '▼'}</span>
+            </button>
+
+            {showExport && (
+              <div style={{ borderTop: '1px solid var(--border)', padding: '14px 16px' }}>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
+                  Leeg schema = invulvakken voor notities · Ingevuld = met huidige scores · Excel bevat automatische berekeningen
+                </p>
+                <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  {/* Print knoppen */}
+                  <a
+                    href={`/admin/tournament/${id}/print?mode=blank`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-sm font-semibold cursor-pointer transition-all active:scale-[0.97]"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+                    🖨 Leeg schema
+                  </a>
+                  <a
+                    href={`/admin/tournament/${id}/print?mode=filled`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-sm font-semibold cursor-pointer transition-all active:scale-[0.97]"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+                    🖨 Ingevuld schema
+                  </a>
+                  {/* Excel knoppen */}
+                  <button
+                    onClick={() => handleExcel('blank')}
+                    disabled={excelLoading !== null}
+                    className="flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-sm font-semibold cursor-pointer transition-all active:scale-[0.97] disabled:opacity-50"
+                    style={{ backgroundColor: '#1D6F42', border: '1px solid #145232', color: '#fff' }}>
+                    {excelLoading === 'blank' ? '⏳ Laden…' : '📊 Excel leeg'}
+                  </button>
+                  <button
+                    onClick={() => handleExcel('filled')}
+                    disabled={excelLoading !== null}
+                    className="flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-sm font-semibold cursor-pointer transition-all active:scale-[0.97] disabled:opacity-50"
+                    style={{ backgroundColor: '#1D6F42', border: '1px solid #145232', color: '#fff' }}>
+                    {excelLoading === 'filled' ? '⏳ Laden…' : '📊 Excel ingevuld'}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
