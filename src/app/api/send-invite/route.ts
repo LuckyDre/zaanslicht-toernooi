@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-const FROM    = 'Zaans Licht Toernooi <noreply@zaanslicht.com>'
+const FROM     = 'Zaans Licht <zaanslicht@zaanslicht.com>'
 const REPLY_TO = 'zaanslicht@outlook.com'
 
 export async function POST(req: NextRequest) {
