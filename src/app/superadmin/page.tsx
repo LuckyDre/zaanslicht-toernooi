@@ -117,8 +117,9 @@ export default function SuperAdminPage() {
   }
 
   const deleteInvitation = async (invId: string) => {
-    const { error } = await supabase.from('invitations').delete().eq('id', invId)
+    const { error } = await supabase.rpc('delete_invitation', { inv_id: invId })
     if (error) { toast.error(`Verwijderen mislukt: ${error.message}`); return }
+    toast.success('Uitnodiging verwijderd')
     setInvitations(prev => prev.filter(i => i.id !== invId))
   }
 
